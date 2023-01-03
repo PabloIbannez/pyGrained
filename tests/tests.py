@@ -3,7 +3,7 @@ import os
 import pyGrained
 import pyGrained.models
 
-dataPath = "../../data/"
+dataPath = "../data/"
 
 resolution = 300
 steps     = 10000
@@ -22,7 +22,7 @@ if not outputFileExist:
 
 for a,fl,mB in aliasFilepathMinBeads:
     out = outputFile + "/" + a
-    test = pyCoarse.models.SBCG(out+"Test",fl,debug=False)
+    test = pyGrained.models.SBCG(out+"Test",fl,debug=False)
     test.generateModel(resolution,steps,minBeads=mB)
 
     model = {"bondsModel":{"name":"ENM",
