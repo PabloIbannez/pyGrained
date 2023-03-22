@@ -3,7 +3,7 @@ import os
 import pyGrained
 import pyGrained.models
 
-dataPath = "../data/"
+dataPath = "./data/"
 
 resolution = 300
 steps     = 10000

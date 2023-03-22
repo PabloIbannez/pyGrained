@@ -1,0 +1,24 @@
+# Ignore all
+*
+
+# Unignore all with extensions
+!*.*
+
+# Unignore all dirs
+!*
+
+### Above combination will ignore all files without extension ###
+
+# Ignore `bin` dir
+
+# Ignore `scripts/__pycache__` dir
+__pycache__/
+
+*.sp
+*.json
+*.pdb
+dist
+
+*TEST*
+tests
+
