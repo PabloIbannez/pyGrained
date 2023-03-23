@@ -1,19 +1,16 @@
-def writePDBcg(self,outName):
-    self.log.info(f"Writing pdb")
+def writePDB(structure,outName):
     io=PDBIO(use_model_flag=1)
-    io.set_structure(self.spreadedCG)
+    io.set_structure(structure)
     io.save(outName)
 
-def writePQRcg(self,outName):
-    self.log.info(f"Writing pqr")
+def writePQR(structure,outName):
     io=PDBIO(use_model_flag=1,is_pqr=True)
-    io.set_structure(self.spreadedCG)
+    io.set_structure(structure)
     io.save(outName)
 
-def writeSPcg(self,outName):
-    self.log.info(f"Writing sp")
+def writeSP(structure,outName):
     with open(outName,"w") as f:
-        for bead in self.spreadedCG.get_atoms():
+        for bead in structure.get_atoms():
             pos = bead.get_coord()
             r   = bead.radius
             c   = hash(bead.get_parent().get_parent().get_id())%256

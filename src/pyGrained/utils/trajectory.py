@@ -1,10 +1,8 @@
-def applyCoarseGrainedOverTrajectory(self,trajPDB,trajDCD):
+def applyCoarseGrainedOverTrajectory(cgMap,trajPDB,trajDCD):
 
-    self.log.info(f"Applying coarse grained over trajectory ...")
-
-    mdls = [bead[0] for bead in self.cgMap]
+    mdls = [bead[0] for bead in cgMap]
     m0   = min(mdls)
-    m0CgMap = {bead:self.cgMap[bead] for bead in self.cgMap.keys() if bead[0] == m0}
+    m0CgMap = {bead:cgMap[bead] for bead in cgMap.keys() if bead[0] == m0}
 
     universe = mda.Universe(trajPDB,trajDCD)
 

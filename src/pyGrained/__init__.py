@@ -350,11 +350,11 @@ class CoarseGrainedBase:
 
         file_extension = pathlib.Path(inputPDBfilePath).suffix
         if   (file_extension == ".pdb"):
-            self.inputStructure = PDBParser().get_structure(name,inputPDBfilePath)
-            self.chargeInInput = False
+            inputStructure = PDBParser().get_structure(name,inputPDBfilePath)
+            chargeInInput = False
         elif (file_extension == ".pqr"):
-            self.inputStructure = PDBParser(is_pqr=True).get_structure(name,inputPDBfilePath)
-            self.chargeInInput = True
+            inputStructure = PDBParser(is_pqr=True).get_structure(name,inputPDBfilePath)
+            chargeInInput = True
         else:
             self.logger.critical(f"The extension {file_extension} of the input file {inputPDBfilePath} can not be handle")
             raise Exception(f"Not supported file extension")
@@ -367,7 +367,7 @@ class CoarseGrainedBase:
         if removeHydrogens:
             self.logger.info(f"Removing hydrogens ...")
             atm2remove = []
-            residues   = list(self.inputStructure.get_residues())
+            residues   = list(inputStructure.get_residues())
             for i,res in enumerate(residues):
                 for atm in res.get_atoms():
                     element = atm.element
@@ -381,7 +381,7 @@ class CoarseGrainedBase:
             self.logger.info(f"Removing nucleics ...")
             nucleics = ['A','C','G','U','I','T']
             ch2remove = set()
-            models = list(self.inputStructure.get_models())
+            models = list(inputStructure.get_models())
             for i,md in enumerate(models):
                 for res in md.get_residues():
                     if res.get_resname().strip() in nucleics:
@@ -395,8 +395,8 @@ class CoarseGrainedBase:
 
         if centerInput:
             self.logger.info(f"Centering input structure ...")
-            center = np.asarray([atm.get_coord() for atm in self.inputStructure.get_atoms()]).mean(axis=0)
-            for atm in self.inputStructure.get_atoms():
+            center = np.asarray([atm.get_coord() for atm in inputStructure.get_atoms()]).mean(axis=0)
+            for atm in inputStructure.get_atoms():
                 atm.set_coord(atm.get_coord()-center)
 
         #############################################################
@@ -404,26 +404,26 @@ class CoarseGrainedBase:
 
         if SASA:
             self.logger.info(f"Computing SASA ...")
-            sasa = computeStructureSASA(self.inputStructure)
+            sasa = computeStructureSASA(inputStructure)
             gc.collect()
 
-            for i,atm in enumerate(self.inputStructure.get_atoms()):
+            for i,atm in enumerate(inputStructure.get_atoms()):
                 atm.totalSASA = sasa[i]
 
         #############################################################
         #################### CLASSES DEFINITION #####################
 
         if aggregateChains:
-            self.classes = self.__getClasses(self.inputStructure);
+            classes = self.__getClasses(inputStructure);
         else:
             #If chains are not aggregated, each chain is a class
 
-            m0  = list(self.inputStructure.get_models())[0]
+            m0  = list(inputStructure.get_models())[0]
 
-            self.classes = {}
+            classes = {}
             for ch in m0.get_chains():
                 chName = ch.get_id()
-                self.classes[chName] = {"leader":chName,"members":chName}
+                classes[chName] = {"leader":chName,"members":chName}
 
         #Note than we only work with the first model.
         #It is because models are assumed to be the same
@@ -434,7 +434,7 @@ class CoarseGrainedBase:
         #################### AGGREAGATE STRUCTURE ###################
 
         self.logger.info(f"Aggregating structure ...")
-        self.aggregatedStructure = self.__aggregateStructure(self.inputStructure,self.classes)
+        aggregatedStructure = self.__aggregateStructure(inputStructure,classes)
 
         #aggregateStructure contains only one model.
         #This model is made of the leader chain of every class.
@@ -445,17 +445,17 @@ class CoarseGrainedBase:
         #The transformation (translation and rotation) for each chain is computed
 
         self.logger.info(f"Computing transformations ...")
-        transformations = self.__computeTransformations(self.inputStructure,self.aggregatedStructure,self.classes)
+        transformations = self.__computeTransformations(inputStructure,aggregatedStructure,classes)
 
         #Transformations are stored in the classes dictionary
         for name,transf in transformations.items():
-            self.classes[name]["transformations"]=transf.copy()
+            classes[name]["transformations"]=transf.copy()
 
         #Each transformation stores the translation and rotation
         #to be applied over the leader chain to obtain the member chain,
         #for the different conformations of the member chain (different models),
         for cls in transformations.keys():
-            for mdl,ch,t,r in self.classes[name]["transformations"]:
+            for mdl,ch,t,r in classes[name]["transformations"]:
                 self.logger.debug(f"Transformation {cls} : {mdl} {ch} {t} {r}")
 
         #############################################################
@@ -469,7 +469,7 @@ class CoarseGrainedBase:
         #across the different conformations (models).
 
         self.logger.info(f"Spreading structure ...")
-        self.spreadedStructure = self.__spreadStructure(self.aggregatedStructure,self.classes)
+        spreadedStructure = self.__spreadStructure(aggregatedStructure,classes)
 
         #############################################################
 
@@ -477,19 +477,123 @@ class CoarseGrainedBase:
 
         #We have defined the following attributes:
 
-        #self.inputStructure: the input structure
-        #self.aggregatedStructure: the aggregated structure
-        #self.spreadedStructure: the spreaded structure
-        #self.classes: the classes of chains
+        #chargeInInput: True if the input file contains charges
+        #inputStructure: the input structure
+        #aggregatedStructure: the aggregated structure
+        #spreadedStructure: the spreaded structure
+        #classes: the classes of chains
+
+        self._chargeInInput       = None
+        self._inputStructure      = None
+        self._aggregatedStructure = None
+        self._spreadedStructure   = None
+        self._classes             = None
+
+        self.setChargeInInput(chargeInInput)
+        self.setInputStructure(inputStructure)
+        self.setAggregatedStructure(aggregatedStructure)
+        self.setSpreadedStructure(spreadedStructure)
+        self.setClasses(classes)
 
         #############################################################
 
         #We define the attributes that has to be added by the derived class
 
+        self._aggregatedCgStructure = None
+        self._spreadedCgStructure   = None
+
+        self._aggregatedCgMap = None
+        self._spreadedCgMap   = None
+
         self._types      = None
         self._states     = None
         self._structure  = None
         self._forceField = None
+
+    ########################################################
+
+    def setChargeInInput(self,chargeInInput):
+        self._chargeInInput = chargeInInput
+
+    def setInputStructure(self,inputStructure):
+        self._inputStructure = inputStructure
+
+    def setAggregatedStructure(self,aggregatedStructure):
+        self._aggregatedStructure = aggregatedStructure
+
+    def setSpreadedStructure(self,spreadedStructure):
+        self._spreadedStructure = spreadedStructure
+
+    def setClasses(self,classes):
+        self._classes = classes
+
+    def getChargeInInput(self):
+        if self._chargeInInput is None:
+            self.logger.error(f"Charge in input not set.")
+            raise ValueError("chargeInInput not set.")
+        return self._chargeInInput
+
+    def getInputStructure(self):
+        if self._inputStructure is None:
+            self.logger.error(f"Input structure not set.")
+            raise ValueError("inputStructure not set.")
+        return self._inputStructure
+
+    def getAggregatedStructure(self):
+        if self._aggregatedStructure is None:
+            self.logger.error(f"Aggregated structure not set.")
+            raise ValueError("aggregatedStructure not set.")
+        return self._aggregatedStructure
+
+    def getSpreadedStructure(self):
+        if self._spreadedStructure is None:
+            self.logger.error(f"Spreaded structure not set.")
+            raise ValueError("spreadedStructure not set.")
+        return self._spreadedStructure
+
+    def getClasses(self):
+        if self._classes is None:
+            self.logger.error(f"Classes not set.")
+            raise ValueError("classes not set.")
+        return self._classes
+
+    ########################################################
+
+    def setAggregatedCgStructure(self,aggregatedCgStructure):
+        self._aggregatedCgStructure = aggregatedCgStructure
+
+    def setSpreadedCgStructure(self,spreadedCgStructure):
+        self._spreadedCgStructure = spreadedCgStructure
+
+    def setAggregatedCgMap(self,aggregatedCgMap):
+        self._aggregatedCgMap = aggregatedCgMap
+
+    def setSpreadedCgMap(self,spreadedCgMap):
+        self._spreadedCgMap = spreadedCgMap
+
+    def getAggregatedCgStructure(self):
+        if self._aggregatedCgStructure is None:
+            self.logger.error(f"Aggregated CG structure not set.")
+            raise ValueError("aggregatedCgStructure not set.")
+        return self._aggregatedCgStructure
+
+    def getSpreadedCgStructure(self):
+        if self._spreadedCgStructure is None:
+            self.logger.error(f"Spreaded CG structure not set.")
+            raise ValueError("spreadedCgStructure not set.")
+        return self._spreadedCgStructure
+
+    def getAggregatedCgMap(self):
+        if self._aggregatedCgMap is None:
+            self.logger.error(f"Aggregated CG map not set.")
+            raise ValueError("aggregatedCgMap not set.")
+        return self._aggregatedCgMap
+
+    def getSpreadedCgMap(self):
+        if self._spreadedCgMap is None:
+            self.logger.error(f"Spreaded CG map not set.")
+            raise ValueError("spreadedCgMap not set.")
+        return self._spreadedCgMap
 
     ########################################################
 

@@ -163,11 +163,6 @@ class SBCG(CoarseGrainedBase):
 
         #We have to set types,states,structure and forceField
 
-        #
-        self.bonds = None
-        self.nativeContacts = None
-        self.exclusions = None
-
         #####################################################
         ################### GENERATE MODEL ##################
 
@@ -184,21 +179,21 @@ class SBCG(CoarseGrainedBase):
         lS         = params.get("lS",0.01)
         minBeads   = params.get("minBeads",1)
 
-        cgAggregatedMap = {}
-        self.cgMap = {}
+        aggregatedCgMap = {}
+        spreadedCgMap   = {}
 
-        self.aggregatedCgStructure = Structure.Structure(self.inputStructure.get_id()+"_SBCG")
+        aggregatedCgStructure = Structure.Structure(self.getInputStructure().get_id()+"_SBCG")
 
         atomCount = 1
-        for mdl in self.aggregatedStructure.get_models():
+        for mdl in self.getAggregatedStructure().get_models():
 
             mdl_cg = Model.Model(mdl.get_id())
-            self.aggregatedCgStructure.add(mdl_cg)
+            aggregatedCgStructure.add(mdl_cg)
 
             for ch in mdl.get_chains():
-                for clsName in self.classes.keys():
+                for clsName in self.getClasses().keys():
 
-                    chName = self.classes[clsName]["leader"]
+                    chName = self.getClasses()[clsName]["leader"]
                     if ch.get_id() == chName:
 
                         chAtoms   = list(ch.get_atoms())
@@ -236,13 +231,13 @@ class SBCG(CoarseGrainedBase):
 
                             ##########################
 
-                            chName = self.classes[clsName]["leader"]
+                            chName = self.getClasses()[clsName]["leader"]
 
                             cgName   = chName+str(cgIndex)
                             cgPos    = computeAtomListCOM(atmList)
                             cgMass   = computeAtomListMass(atmList)
                             cgRadius = computeAtomListRadiusOfGyration(atmList)
-                            if(self.chargeInInput):
+                            if(self.getChargeInInput()):
                                 cgCharge = computeAtomListCharge(atmList)
                             else:
                                 cgCharge = computeAtomListChargeFromResidues(atmList)
@@ -283,36 +278,36 @@ class SBCG(CoarseGrainedBase):
 
                             currentBead = (mdl_cg.get_id(),ch_cg.get_id(),cgIndex,cgName)
 
-                            cgAggregatedMap[currentBead]=[]
+                            aggregatedCgMap[currentBead]=[]
                             for atm in atmList:
                                 mdl_id = atm.get_parent().get_parent().get_parent().get_id()
                                 ch_id  = atm.get_parent().get_parent().get_id()
                                 res_id = atm.get_parent().get_id()[1]
                                 atm_id = atm.get_name()
                                 currentAtom = (mdl_id,ch_id,res_id,atm_id)
-                                cgAggregatedMap[currentBead].append(currentAtom)
+                                aggregatedCgMap[currentBead].append(currentAtom)
                     else:
                         self.logger.info(f"Class {clsName} which leader is {chName} has less beads than minBeads({minBeads}). Ignoring this chain.")
 
-        self.spreadedCG = super()._CoarseGrainedBase__spreadStructure(self.aggregatedCgStructure,self.classes)
+        spreadedCgStructure = super()._CoarseGrainedBase__spreadStructure(aggregatedCgStructure,self.getClasses())
 
         ch2leader = {}
-        for clsName in self.classes:
-            leader = self.classes[clsName]["leader"]
+        for clsName in self.getClasses():
+            leader = self.getClasses()[clsName]["leader"]
             ch2leader[leader]=[leader]
-            for mmb in self.classes[clsName]["members"]:
+            for mmb in self.getClasses()[clsName]["members"]:
                 ch2leader[mmb]=leader
 
         atm2index = {}
-        for atm in self.spreadedStructure.get_atoms():
+        for atm in self.getSpreadedStructure().get_atoms():
             mdl_id = atm.get_parent().get_parent().get_parent().get_id()
             ch_id  = atm.get_parent().get_parent().get_id()
             res_id = atm.get_parent().get_id()[1]
             atm_id = atm.get_name()
             atm2index[(mdl_id,ch_id,res_id,atm_id)] = atm.get_serial_number()
 
-        mdl_cg = list(self.aggregatedCgStructure.get_models())[0].get_id()
-        for bead in self.spreadedCG.get_atoms():
+        mdl_cg = list(aggregatedCgStructure.get_models())[0].get_id()
+        for bead in spreadedCgStructure.get_atoms():
             mdl_id = bead.get_parent().get_parent().get_parent().get_id()
             ch_id  = bead.get_parent().get_parent().get_id()
             res_id = bead.get_parent().get_id()[1]
@@ -320,97 +315,106 @@ class SBCG(CoarseGrainedBase):
 
             currentBead = (mdl_id,ch_id,res_id,atm_id,bead.get_serial_number())
 
-            self.cgMap[currentBead] = []
-            for atm in cgAggregatedMap[(mdl_cg,ch2leader[ch_id],res_id,atm_id)]:
+            spreadedCgMap[currentBead] = []
+            for atm in aggregatedCgMap[(mdl_cg,ch2leader[ch_id],res_id,atm_id)]:
                 mdl_atm,ch_atm,res_atm,atm_atm = atm
                 index = atm2index[(mdl_id,ch_id,res_atm,atm_atm)]
-                self.cgMap[currentBead].append((mdl_id,ch_id,res_atm,atm_atm,index))
+                spreadedCgMap[currentBead].append((mdl_id,ch_id,res_atm,atm_atm,index))
+
+        #############################################################
 
         self.logger.info(f"Model generation end")
 
+        #We have defined the following attributes:
 
-    def generateTopology(self,model:dict):
+        #aggregatedCgStructure: The coarse grained structure for class leaders
+        #spreadedCgStructure: The spreaded coarse grained structure
 
-        if "bondsModel" in model.keys():
-            bondsModel = model["bondsModel"]
-        else:
-            bondsModel = None
+        #spreadedCgMap: A dictionary that maps the coarse-grained beads to the original atoms.
+        #       The keys are the coarse-grained beads and the values are the original atoms.
+        #       The keys are tuples of the form (model,chain,residue,atom,serial number)
+        #       and the values are tuples of the form (model,chain,residue,atom,serial number).
 
-        if "nativeContactsModel" in model.keys():
-            nativeContactsModel = model["nativeContactsModel"]
-        else:
-            nativeContactsModel = None
-
-        #########################################
+        #############################################################
 
         self.logger.info(f"Generating topology ...")
 
-        if bondsModel is not None:
-            name = bondsModel["name"]
-            if name == "ENM":
-                self.logger.info(f"Generating ENM bonds ...")
-                enmCut = bondsModel["parameters"]["enmCut"]
-                self.bonds = self.__generateENM(self.spreadedStructure,self.cgMap,enmCut)
-            else:
-                self.logger.critical(f"Bonds model {name} is not availble")
-                sys.exit(1)
+        try:
+            bondsModel = globalParams["bondsModel"]
+        except:
+            self.logger.error(f"bondsModel not defined in params")
+            raise Exception("bondsModel not defined in parameters")
 
-        if nativeContactsModel["name"] is not None:
-            name = nativeContactsModel["name"]
-            if name == "CA":
-                self.logger.info(f"Generating CA native contacts ...")
-                ncCut = nativeContactsModel["parameters"]["ncCut"]
-                self.nativeContacts = self.__generateNC(self.spreadedStructure,self.cgMap,ncCut)
-            else:
-                self.logger.critical(f"Native contacts model {name} is not availble")
-                sys.exit(1)
+        try:
+            nativeContactsModel = globalParams["nativeContactsModel"]
+        except:
+            self.logger.error("nativeContactsModel not defined in parameters")
+            raise Exception("nativeContactsModel not defined in parameters")
+
+        self.logger.debug(f"Selected bonds model: {bondsModel}")
+        self.logger.debug(f"Selected native contacts model: {nativeContactsModel}")
+
+        #############################################################
+
+        self.logger.info(f"Generating bonds ...")
+
+        bondsModelName = bondsModel["name"]
+        if bondsModelName == "ENM":
+            self.logger.info(f"Generating ENM bonds ...")
+            enmCut = bondsModel["parameters"]["enmCut"]
+            bonds = self.__generateENM(self.getSpreadedStructure(),spreadedCgMap,enmCut)
+        else:
+            self.logger.error(f"Bonds model {bondsModelName} is not availble")
+            raise Exception(f"Bonds model not available")
+
+        self.logger.info(f"Generating native contacts ...")
+
+        nativeContacsModelName = nativeContactsModel["name"]
+        if nativeContacsModelName == "CA":
+            self.logger.info(f"Generating CA native contacts ...")
+            ncCut = nativeContactsModel["parameters"]["ncCut"]
+            nativeContacts = self.__generateNC(self.getSpreadedStructure(),spreadedCgMap,ncCut)
+        else:
+            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
+            raise Exception(f"Native contacts model not available")
 
         #########################################
 
-        self.exclusions = {}
+        exclusions = {}
 
-        for bead in self.spreadedCG.get_atoms():
-            self.exclusions[bead.get_serial_number()]=set()
+        for bead in spreadedCgStructure.get_atoms():
+            exclusions[bead.get_serial_number()]=set()
 
-        if self.bonds:
-            for bnd in self.bonds.keys():
-                id_i,id_j = bnd
-                self.exclusions[id_i].add(id_j)
-                self.exclusions[id_j].add(id_i)
+        for bnd in bonds.keys():
+            id_i,id_j = bnd
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
 
-        if self.nativeContacts:
-            for nc in self.nativeContacts.keys():
-                id_i,id_j = nc
-                self.exclusions[id_i].add(id_j)
-                self.exclusions[id_j].add(id_i)
-
+        for nc in nativeContacts.keys():
+            id_i,id_j = nc
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
 
         self.logger.info(f"Topology generation end")
 
-    def generateSimulation(self,filename,K,epsilon,D):
+        #########################################
 
-        self.logger.info(f"Generating simulation ...")
+        #We have to set types,state,structure and forceField
 
-        beads = [b for b in self.spreadedCG.get_atoms()]
+        #Types
 
-        simulation = {}
-        simulation["topology"] = {}
-        simulation["topology"]["particleTypes"] = {}
-        simulation["topology"]["forceField"]    = {}
+        self.logger.info(f"Generating types ...")
 
-        #Coordinates
-
-        simulation["coordinates"] = {"labels":["id","position"],"data":[]}
-
-        for atm in self.spreadedCG.get_atoms():
-            simulation["coordinates"]["data"].append([atm.get_serial_number(),list(atm.get_coord())])
+        types = {}
+        types["labels"] = ["name", "mass", "radius", "charge"]
+        types["data"]   = []
 
         #Generate types
-        types={}
-        for atm in list(self.spreadedCG.get_models())[0].get_atoms():
+        typesTmp={}
+        for atm in list(spreadedCgStructure.get_models())[0].get_atoms():
             typeName = atm.get_name()
 
-            if typeName not in types.keys():
+            if typeName not in typesTmp.keys():
 
                 mass      = round(atm.mass,3)
                 radius    = round(atm.radius,3)
@@ -420,99 +424,153 @@ class SBCG(CoarseGrainedBase):
                     totalSASApolar  = round(atm.totalSASApolar,3)
                     totalSASAapolar = round(atm.totalSASAapolar,3)
 
-                types[typeName]={"name":typeName,"mass":mass,"radius":radius,"charge":charge}
+                typesTmp[typeName]={"name":typeName,"mass":mass,"radius":radius,"charge":charge}
 
-        simulation["topology"]["particleTypes"]["labels"] = ["name", "mass", "radius", "charge"]
-        simulation["topology"]["particleTypes"]["data"]   = []
+        for t in typesTmp.keys():
+            name   = typesTmp[t]["name"]
+            mass   = typesTmp[t]["mass"]
+            radius = typesTmp[t]["radius"]
+            charge = typesTmp[t]["charge"]
+            types["data"].append([name,mass,radius,charge])
 
-        for t in types.keys():
-            name   = types[t]["name"]
-            mass   = types[t]["mass"]
-            radius = types[t]["radius"]
-            charge = types[t]["charge"]
-            simulation["topology"]["particleTypes"]["data"].append([name,mass,radius,charge])
+        self.logger.debug(f"Types: {types}")
+        self.logger.info(f"Types generation end")
 
-        ######################################
+        #Types end
+        #State
 
-        simulation["topology"]["structure"] = {}
-        simulation["topology"]["structure"]["labels"] = ["id", "type", "modelId"]
-        simulation["topology"]["structure"]["data"]   = []
+        self.logger.info(f"Generating state ...")
 
-        for atm in self.spreadedCG.get_atoms():
+        state = {}
+        state["labels"] = ["id", "position"]
+        state["data"]   = []
+
+        for atm in spreadedCgStructure.get_atoms():
+            state["data"].append([atm.get_serial_number(),list(atm.get_coord())])
+
+        #self.logger.debug(f"State: {state}")
+        self.logger.info(f"State generation end")
+
+        #State end
+
+        #Structure
+
+        self.logger.info(f"Generating structure ...")
+
+        structure = {}
+        structure["labels"] = ["id", "type", "modelId"]
+        structure["data"]   = []
+
+        for atm in spreadedCgStructure.get_atoms():
             #mdl = atm.get_parent().get_parent().get_parent().get_id()
-            mdl = 0
-            simulation["topology"]["structure"]["data"].append([atm.get_serial_number(),atm.get_name(),0])
+            mdl = 0 #All atoms are in the same model
+            structure["data"].append([atm.get_serial_number(),atm.get_name(),mdl])
 
-        ######################################
+        #self.logger.debug(f"Structure: {structure}")
+        self.logger.info(f"Structure generation end")
 
-        if self.bonds:
-            simulation["topology"]["forceField"]["bonds"] = {}
-            simulation["topology"]["forceField"]["bonds"]["type"]       = ["Bond2","HarmonicConst_K"]
-            simulation["topology"]["forceField"]["bonds"]["parameters"] = {"K":K}
-            simulation["topology"]["forceField"]["bonds"]["labels"]     = ["id_i", "id_j", "r0"]
-            simulation["topology"]["forceField"]["bonds"]["data"]       = []
+        #Structure end
 
-            for bnd in self.bonds.keys():
+        #ForceField
+
+        self.logger.info(f"Generating force field ...")
+
+        forceField = {}
+
+        #Auxiliar list with all beads in the system
+        beads = [b for b in spreadedCgStructure.get_atoms()]
+
+        #Bonds
+        if bondsModelName == "ENM":
+            forceField["bonds"] = {}
+            forceField["bonds"]["type"]       = ["Bond2","HarmonicConst_K"]
+            forceField["bonds"]["parameters"] = {}
+            forceField["bonds"]["parameters"]["K"] = bondsModel["parameters"]["K"]
+            forceField["bonds"]["labels"] = ["id_i", "id_j", "K", "r0"]
+            forceField["bonds"]["data"]   = []
+
+            for bnd in bonds.keys():
                 id_i,id_j = bnd
                 pos_i = beads[id_i].get_coord()
                 pos_j = beads[id_j].get_coord()
-                dst = round(np.linalg.norm(pos_i-pos_j),3)
-                simulation["topology"]["forceField"]["bonds"]["data"].append([id_i,id_j,dst])
+                r0 = np.linalg.norm(pos_i-pos_j)
+                forceField["bonds"]["data"].append([id_i,id_j,r0])
+        else:
+            self.logger.error(f"Bonds model {bondsModelName} is not availble")
+            raise Exception(f"Bonds model not available")
 
+        #Native contacts
+        if nativeContacsModelName == "CA":
+            forceField["nativeContacts"] = {}
+            forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCA"]
+            forceField["nativeContacts"]["parameters"] = {"eps0":1.0}
+            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
+            forceField["nativeContacts"]["data"]       = []
 
-        ######################################
-
-        if self.nativeContacts:
-            simulation["topology"]["forceField"]["nativeContacts"] = {}
-            simulation["topology"]["forceField"]["nativeContacts"]["type"]       = ["Bond2","MorseWCA"]
-            simulation["topology"]["forceField"]["nativeContacts"]["parameters"] = {"eps0":1.0}
-            simulation["topology"]["forceField"]["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
-            simulation["topology"]["forceField"]["nativeContacts"]["data"]       = []
-
-            for nc in self.nativeContacts.keys():
+            for nc in nativeContacts.keys():
                 id_i,id_j = nc
                 pos_i = beads[id_i].get_coord()
                 pos_j = beads[id_j].get_coord()
                 dst = round(np.linalg.norm(pos_i-pos_j),3)
-                E   = epsilon*self.nativeContacts[nc]
-                simulation["topology"]["forceField"]["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
+                E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
+                D   = nativeContactsModel["parameters"]["D"]
+                forceField["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
+        else:
+            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
+            raise Exception(f"Native contacts model not available")
 
-        ######################################
+        #Verlet list
 
-        simulation["topology"]["forceField"]["exclusions"] = {}
-        simulation["topology"]["forceField"]["exclusions"]["type"]       = ["Exclusions", "ExclusionsList"]
-        simulation["topology"]["forceField"]["exclusions"]["labels"]     = ["id", "id_list"]
-        simulation["topology"]["forceField"]["exclusions"]["data"]       = []
+        forceField["nl"] = {}
+        forceField["nl"]["type"]       = ["VerletConditionalListSet","nonExclIntra_nonExclInter"]
+        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.5}
+        forceField["nl"]["labels"]     = ["id", "id_list"]
+        forceField["nl"]["data"]       = []
 
-        for excl in self.exclusions.keys():
-            simulation["topology"]["forceField"]["exclusions"]["data"].append([excl,sorted(self.exclusions[excl])])
+        exclusions = {}
 
-        ######################################
+        for bead in spreadedCgStructure.get_atoms():
+            exclusions[bead.get_serial_number()]=set()
 
-        simulation["topology"]["forceField"]["verletList"] = {}
-        simulation["topology"]["forceField"]["verletList"]["type"]       = ["NeighbourList", "ConditionedVerletList"]
-        simulation["topology"]["forceField"]["verletList"]["parameters"] = {"cutOffVerletFactor": 1.5,
-                                                                            "exclusions": ["topology", "forceField", "exclusions"]}
+        for bnd in bonds.keys():
+            id_i,id_j = bnd
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
 
-        ######################################
+        for nc in nativeContacts.keys():
+            id_i,id_j = nc
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
 
-        simulation["topology"]["forceField"]["steric"] = {}
-        simulation["topology"]["forceField"]["steric"]["type"]       = ["NonBonded", "WCAType2"]
-        simulation["topology"]["forceField"]["steric"]["parameters"] = {"cutOffFactor": 2.5,"condition":"intra"}
-        simulation["topology"]["forceField"]["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
-        simulation["topology"]["forceField"]["steric"]["data"]       = []
+        for bead in spreadedCgStructure.get_atoms():
+            id_ = bead.get_serial_number()
+            forceField["nl"]["data"].append([id_,list(exclusions[id_])])
 
-        for t1,t2 in itertools.product(types.keys(),repeat=2):
-            r1 = types[t1]["radius"]
-            r2 = types[t2]["radius"]
+        #Steric
 
-            simulation["topology"]["forceField"]["steric"]["data"].append([t1,t2,1.0,round(r1+r2,3)])
+        forceField["steric"] = {}
+        forceField["steric"]["type"]       = ["NonBonded", "WCAType2"]
+        forceField["steric"]["parameters"] = {"cutOffFactor": 2.5,"condition":"intra"}
+        forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
+        forceField["steric"]["data"]       = []
 
-        ######################################
+        for t1,t2 in itertools.product(typesTmp.keys(),repeat=2):
+            r1 = typesTmp[t1]["radius"]
+            r2 = typesTmp[t2]["radius"]
 
-        self.logger.info(f"Writing simulation ...")
+            forceField["steric"]["data"].append([t1,t2,1.0,round(r1+r2,3)])
 
-        with open(filename,"w") as f:
-            opts = jsbeautifier.default_options()
-            opts.indent_size  = 2
-            f.write(jsbeautifier.beautify(json.dumps(simulation), opts))
+        #self.logger.debug(f"Force field: {forceField}")
+        self.logger.info(f"Force field generation end")
+
+        #ForceField end
+
+        self.setAggregatedCgStructure(aggregatedCgStructure)
+        self.setSpreadedCgStructure(spreadedCgStructure)
+        self.setAggregatedCgMap(aggregatedCgMap)
+        self.setSpreadedCgMap(spreadedCgMap)
+
+        self.setTypes(types)
+        self.setState(state)
+        self.setStructure(structure)
+        self.setForceField(forceField)
