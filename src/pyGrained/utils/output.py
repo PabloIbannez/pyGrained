@@ -13,6 +13,6 @@ def writeSP(structure,outName):
         for bead in structure.get_atoms():
             pos = bead.get_coord()
             r   = bead.radius
-            c   = hash(bead.get_parent().get_parent().get_id())%256
+            c   = int("".join([str(ord(i)) for i in bead.get_parent().get_parent().get_id()]))%256
             f.write(f"{pos[0]} {pos[1]} {pos[2]} {r} {c}\n")
 

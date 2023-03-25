@@ -22,6 +22,11 @@ from Bio.PDB import *
 from ..utils.computeK import computeK
 from ..utils.atomList import *
 
+from ..utils.coarseGrained import *
+
+from ..utils.bonds import *
+from ..utils.nativeContacts import *
+
 class SBCG(CoarseGrainedBase):
 
     def __generateSBCG_raw(self,positions,weights,resolution,S,e0,eS,l0,lS,minBeads):
@@ -102,14 +107,14 @@ class SBCG(CoarseGrainedBase):
 
         return bondBeads
 
-    def __generateNC(self,structure,cgMap,ncCut):
+    def __generateNC(self,structure,cgMap,ncCut,n):
 
         atom2bead = {}
         chainsCg = set()
         #Invert map
         for bead,atomsList in cgMap.items():
             chId      = bead[1]
-            chainsCg.add(chId) #Not all chains can be in the cg model
+            chainsCg.add(chId) #Not all chains could be present in the cg model
 
             beadIndex = bead[4]
             for atm in atomsList:
@@ -130,11 +135,15 @@ class SBCG(CoarseGrainedBase):
             ch1Index = atomsCA[nc[0]].get_parent().get_parent().get_id()
             ch2Index = atomsCA[nc[1]].get_parent().get_parent().get_id()
 
+            res1Index = atomsCA[nc[0]].get_parent().get_id()[1]
+            res2Index = atomsCA[nc[1]].get_parent().get_id()[1]
+
             if (ch1Index in chainsCg) and (ch2Index in chainsCg):
                 if ch1Index != ch2Index or mdl1Index != mdl2Index:
-                    bead1Index = atom2bead[atomsCA[nc[0]].get_serial_number()]
-                    bead2Index = atom2bead[atomsCA[nc[1]].get_serial_number()]
-                    ncBeadsTmp.append((bead1Index,bead2Index))
+                    if abs(res1Index-res2Index) > n:
+                        bead1Index = atom2bead[atomsCA[nc[0]].get_serial_number()]
+                        bead2Index = atom2bead[atomsCA[nc[1]].get_serial_number()]
+                        ncBeadsTmp.append((bead1Index,bead2Index))
             else:
                 self.logger.debug(f"While generating native contacts, the chain {ch1Index} or the chain {ch2Index} has been found in the all atom model but not in CG")
 
@@ -144,6 +153,8 @@ class SBCG(CoarseGrainedBase):
         for nc in ncBeadsTmp:
             ncBeads[nc]+=1
 
+        self.logger.info(f"Maximum number of native contacts: {max(ncBeads.values())}")
+
         return ncBeads
 
     def __init__(self,
@@ -152,12 +163,14 @@ class SBCG(CoarseGrainedBase):
                  params:dict,
                  debug = False):
 
+        SASA = params.get("SASA",True)
+
         super().__init__(tpy  = "SBCG",
                          name = name,
                          inputPDBfilePath = inputPDBfilePath,
                          removeHydrogens = True,removeNucleics  = True,
                          centerInput = params.get("centerInput",True),
-                         SASA = params.get("SASA",True),
+                         SASA = SASA,
                          aggregateChains = params.get("aggregateChains",True),
                          debug = debug)
 
@@ -291,49 +304,37 @@ class SBCG(CoarseGrainedBase):
 
         spreadedCgStructure = super()._CoarseGrainedBase__spreadStructure(aggregatedCgStructure,self.getClasses())
 
-        ch2leader = {}
-        for clsName in self.getClasses():
-            leader = self.getClasses()[clsName]["leader"]
-            ch2leader[leader]=[leader]
-            for mmb in self.getClasses()[clsName]["members"]:
-                ch2leader[mmb]=leader
-
-        atm2index = {}
-        for atm in self.getSpreadedStructure().get_atoms():
-            mdl_id = atm.get_parent().get_parent().get_parent().get_id()
-            ch_id  = atm.get_parent().get_parent().get_id()
-            res_id = atm.get_parent().get_id()[1]
-            atm_id = atm.get_name()
-            atm2index[(mdl_id,ch_id,res_id,atm_id)] = atm.get_serial_number()
-
-        mdl_cg = list(aggregatedCgStructure.get_models())[0].get_id()
-        for bead in spreadedCgStructure.get_atoms():
-            mdl_id = bead.get_parent().get_parent().get_parent().get_id()
-            ch_id  = bead.get_parent().get_parent().get_id()
-            res_id = bead.get_parent().get_id()[1]
-            atm_id = bead.get_name()
-
-            currentBead = (mdl_id,ch_id,res_id,atm_id,bead.get_serial_number())
-
-            spreadedCgMap[currentBead] = []
-            for atm in aggregatedCgMap[(mdl_cg,ch2leader[ch_id],res_id,atm_id)]:
-                mdl_atm,ch_atm,res_atm,atm_atm = atm
-                index = atm2index[(mdl_id,ch_id,res_atm,atm_atm)]
-                spreadedCgMap[currentBead].append((mdl_id,ch_id,res_atm,atm_atm,index))
-
-        #############################################################
+        spreadedCgMap = generateSpreadedCgMap(self.getSpreadedStructure(),
+                                              self.getClasses(),
+                                              aggregatedCgStructure,
+                                              spreadedCgStructure,
+                                              aggregatedCgMap)
 
         self.logger.info(f"Model generation end")
+
+        #############################################################
 
         #We have defined the following attributes:
 
         #aggregatedCgStructure: The coarse grained structure for class leaders
+
         #spreadedCgStructure: The spreaded coarse grained structure
 
+        #aggregatedCgMap: A dictionary that maps the coarse-grained beads to the original atoms of the class leaders.
+        #                 The keys are the coarse-grained beads and the values are the original atoms.
+        #                 The keys are tuples of the form (model,chain,residue,atom,serial number)
+        #                 and the values are tuples of the form (model,chain,residue,atom,serial number).
+
         #spreadedCgMap: A dictionary that maps the coarse-grained beads to the original atoms.
-        #       The keys are the coarse-grained beads and the values are the original atoms.
-        #       The keys are tuples of the form (model,chain,residue,atom,serial number)
-        #       and the values are tuples of the form (model,chain,residue,atom,serial number).
+        #               The keys are the coarse-grained beads and the values are the original atoms.
+        #               The keys are tuples of the form (model,chain,residue,atom,serial number)
+        #               and the values are tuples of the form (model,chain,residue,atom,serial number).
+
+        #############################################################
+
+        types     = generateTypes(spreadedCgStructure,SASA)
+        state     = generateState(spreadedCgStructure)
+        structure = generateStructure(spreadedCgStructure)
 
         #############################################################
 
@@ -373,7 +374,7 @@ class SBCG(CoarseGrainedBase):
         if nativeContacsModelName == "CA":
             self.logger.info(f"Generating CA native contacts ...")
             ncCut = nativeContactsModel["parameters"]["ncCut"]
-            nativeContacts = self.__generateNC(self.getSpreadedStructure(),spreadedCgMap,ncCut)
+            nativeContacts = self.__generateNC(self.getSpreadedStructure(),spreadedCgMap,ncCut,2)
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")
@@ -399,78 +400,6 @@ class SBCG(CoarseGrainedBase):
 
         #########################################
 
-        #We have to set types,state,structure and forceField
-
-        #Types
-
-        self.logger.info(f"Generating types ...")
-
-        types = {}
-        types["labels"] = ["name", "mass", "radius", "charge"]
-        types["data"]   = []
-
-        #Generate types
-        typesTmp={}
-        for atm in list(spreadedCgStructure.get_models())[0].get_atoms():
-            typeName = atm.get_name()
-
-            if typeName not in typesTmp.keys():
-
-                mass      = round(atm.mass,3)
-                radius    = round(atm.radius,3)
-                charge    = round(atm.get_charge(),3)
-                if SASA:
-                    totalSASA = round(atm.totalSASA,3)
-                    totalSASApolar  = round(atm.totalSASApolar,3)
-                    totalSASAapolar = round(atm.totalSASAapolar,3)
-
-                typesTmp[typeName]={"name":typeName,"mass":mass,"radius":radius,"charge":charge}
-
-        for t in typesTmp.keys():
-            name   = typesTmp[t]["name"]
-            mass   = typesTmp[t]["mass"]
-            radius = typesTmp[t]["radius"]
-            charge = typesTmp[t]["charge"]
-            types["data"].append([name,mass,radius,charge])
-
-        self.logger.debug(f"Types: {types}")
-        self.logger.info(f"Types generation end")
-
-        #Types end
-        #State
-
-        self.logger.info(f"Generating state ...")
-
-        state = {}
-        state["labels"] = ["id", "position"]
-        state["data"]   = []
-
-        for atm in spreadedCgStructure.get_atoms():
-            state["data"].append([atm.get_serial_number(),list(atm.get_coord())])
-
-        #self.logger.debug(f"State: {state}")
-        self.logger.info(f"State generation end")
-
-        #State end
-
-        #Structure
-
-        self.logger.info(f"Generating structure ...")
-
-        structure = {}
-        structure["labels"] = ["id", "type", "modelId"]
-        structure["data"]   = []
-
-        for atm in spreadedCgStructure.get_atoms():
-            #mdl = atm.get_parent().get_parent().get_parent().get_id()
-            mdl = 0 #All atoms are in the same model
-            structure["data"].append([atm.get_serial_number(),atm.get_name(),mdl])
-
-        #self.logger.debug(f"Structure: {structure}")
-        self.logger.info(f"Structure generation end")
-
-        #Structure end
-
         #ForceField
 
         self.logger.info(f"Generating force field ...")
@@ -483,10 +412,10 @@ class SBCG(CoarseGrainedBase):
         #Bonds
         if bondsModelName == "ENM":
             forceField["bonds"] = {}
-            forceField["bonds"]["type"]       = ["Bond2","HarmonicConst_K"]
+            forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
             forceField["bonds"]["parameters"] = {}
             forceField["bonds"]["parameters"]["K"] = bondsModel["parameters"]["K"]
-            forceField["bonds"]["labels"] = ["id_i", "id_j", "K", "r0"]
+            forceField["bonds"]["labels"] = ["id_i", "id_j", "r0"]
             forceField["bonds"]["data"]   = []
 
             for bnd in bonds.keys():
@@ -502,7 +431,7 @@ class SBCG(CoarseGrainedBase):
         #Native contacts
         if nativeContacsModelName == "CA":
             forceField["nativeContacts"] = {}
-            forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCA"]
+            forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
             forceField["nativeContacts"]["parameters"] = {"eps0":1.0}
             forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
             forceField["nativeContacts"]["data"]       = []
@@ -554,16 +483,22 @@ class SBCG(CoarseGrainedBase):
         forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
         forceField["steric"]["data"]       = []
 
-        for t1,t2 in itertools.product(typesTmp.keys(),repeat=2):
-            r1 = typesTmp[t1]["radius"]
-            r2 = typesTmp[t2]["radius"]
+        nameIndex   = types["labels"].index("name")
+        radiusIndex = types["labels"].index("radius")
+        for t1,t2 in itertools.product(types["data"],repeat=2):
+            tName1 = t1[nameIndex]
+            tName2 = t2[nameIndex]
 
-            forceField["steric"]["data"].append([t1,t2,1.0,round(r1+r2,3)])
+            tRadius1 = t1[radiusIndex]
+            tRadius2 = t2[radiusIndex]
+            forceField["steric"]["data"].append([tName1,tName2,1.0,round(tRadius1+tRadius2,3)])
 
         #self.logger.debug(f"Force field: {forceField}")
         self.logger.info(f"Force field generation end")
 
         #ForceField end
+
+        #############################################################
 
         self.setAggregatedCgStructure(aggregatedCgStructure)
         self.setSpreadedCgStructure(spreadedCgStructure)

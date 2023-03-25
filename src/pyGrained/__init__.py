@@ -1,11 +1,16 @@
 import sys,os
 import gc
 
+from tqdm import tqdm
+
 import uuid
 
 import pathlib
 
 import numpy as np
+
+from pdbfixer import PDBFixer
+from openmm.app import PDBFile
 
 from Bio.PDB import *
 from Bio.Data.SCOPData import protein_letters_3to1
@@ -15,6 +20,8 @@ from string import ascii_uppercase
 
 import logging
 import warnings
+
+import pdb
 
 #############################################################
 
@@ -315,6 +322,7 @@ class CoarseGrainedBase:
     def __init__(self,
                  tpy:str,name:str,
                  inputPDBfilePath:str,
+                 fixPDB = False,
                  removeHydrogens = True,removeNucleics  = True,
                  centerInput = True,
                  SASA = False,
@@ -350,7 +358,74 @@ class CoarseGrainedBase:
 
         file_extension = pathlib.Path(inputPDBfilePath).suffix
         if   (file_extension == ".pdb"):
+
             inputStructure = PDBParser().get_structure(name,inputPDBfilePath)
+
+            if fixPDB:
+                self.logger.info("Fixing PDB file ...")
+
+                #Write each model in inputStructure to file
+                #Fix that file and then update model in inputStructure
+
+                class ModelFixer(Select):
+
+                    def __init__(self,mdlId):
+                        super().__init__()
+                        self.mdlId = mdlId
+
+                    def accept_model(self, model):
+                        if model.get_id() == self.mdlId:
+                            return True
+                        else:
+                            return False
+
+                for mdl in tqdm(list(inputStructure.get_models())):
+
+                    mdlId = mdl.get_id()
+                    mdlFixer = ModelFixer(mdlId)
+
+                    io = PDBIO()
+                    io.set_structure(inputStructure)
+                    io.save(f"tmp.pdb",mdlFixer)
+
+                    ############ FIX TMP.PDB ############
+
+                    fixer = PDBFixer(filename = "tmp.pdb")
+
+                    fixer.missingResidues = {}
+
+                    fixer.findMissingAtoms()
+                    fixer.addMissingAtoms()
+                    fixer.addMissingHydrogens(7.0)
+
+                    PDBFile.writeFile(fixer.topology, fixer.positions, open("fixed.pdb", 'w'), keepIds=True)
+
+                    ############ UPDATE MODEL ############
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        mdlFixed = list(PDBParser().get_structure(name,"fixed.pdb").get_models())[0]
+
+                    mdlFixed.id = mdlId
+
+                    struct = mdl.get_parent()
+
+                    struct.detach_child(mdl.get_id())
+                    mdl.detach_parent()
+
+                    struct.add(mdlFixed)
+                    mdlFixed.set_parent(struct)
+
+                    #Remove aux files
+                    os.remove("tmp.pdb")
+                    os.remove("fixed.pdb")
+
+                io = PDBIO()
+                io.set_structure(inputStructure)
+                io.save(inputPDBfilePath.replace(".pdb","_fixed.pdb"))
+
+                self.logger.info("PDB fixed")
+
             chargeInInput = False
         elif (file_extension == ".pqr"):
             inputStructure = PDBParser(is_pqr=True).get_structure(name,inputPDBfilePath)
@@ -467,6 +542,10 @@ class CoarseGrainedBase:
         #This ensures that all the chains (of the same class)
         #have the same number of atoms and are equivalent
         #across the different conformations (models).
+
+        #Note that spreaded structure is the structure we should work with.
+        #It is prepared for that. For example for a spread structured particle
+        #indices are ensured to start with 0 and be consecutive
 
         self.logger.info(f"Spreading structure ...")
         spreadedStructure = self.__spreadStructure(aggregatedStructure,classes)

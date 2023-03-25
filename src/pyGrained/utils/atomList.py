@@ -29,6 +29,25 @@ def computeAtomListMass(atmList):
 
     return np.sum(masses)
 
+def computeAtomListMassFromResidues(atmList):
+
+    try:
+
+        computeAtomListMassFromResidues.aminoacidMasses
+
+    except:
+
+        currentPath = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(currentPath,"..","data","aminoacidMasses.json"),"r") as fchg:
+            computeAtomListMassFromResidues.aminoacidMasses = json.load(fchg)
+
+    mass = 0.0
+    for atm in atmList:
+        if atm.get_name() == "CA":
+            mass+=computeAtomListMassFromResidues.aminoacidMasses[atm.get_parent().get_resname()]
+
+    return mass
+
 def computeAtomListCharge(atmList):
     charges = []
     for atm in atmList:
@@ -71,6 +90,27 @@ def computeAtomListRadiusOfGyration(atmList):
     wR2 = np.asarray(wR2).sum()
 
     return np.sqrt(wR2/M)
+
+def computeAtomListRadiusFromResidues(atmList):
+
+    logger = logging.getLogger("pyGrained")
+
+    try:
+
+        computeAtomListRadiusFromResidues.aminoacidRadii
+
+    except:
+
+        currentPath = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(currentPath,"..","data","aminoacidRadii.json"),"r") as fchg:
+            computeAtomListRadiusFromResidues.aminoacidRadii = json.load(fchg)
+
+    if len(atmList) > 1:
+        logger.error("Computing the radius for a list of atoms longer than 1 is not implemented")
+        raise NotImplementedError("Computing the radius for a list of atoms longer than 1 is not implemented")
+    else:
+        atm = atmList[0]
+        return computeAtomListRadiusFromResidues.aminoacidRadii[atm.get_parent().get_resname()]
 
 def computeAtomListSASA(atmList):
 
