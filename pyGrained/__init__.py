@@ -1,8 +1,6 @@
 import sys,os
 import gc
 
-import shutil
-
 from tqdm import tqdm
 
 import uuid
@@ -350,6 +348,22 @@ class CoarseGrainedBase:
         self.logger.addHandler(self.clog)
 
         #############################################################
+        ##################### TRY LOAD PDBFIXER #####################
+
+        if fixPDB:
+
+            try:
+
+                from pdbfixer import PDBFixer
+                from openmm.app import PDBFile
+
+            except:
+
+                self.logger.warning(f"PDBFixer not found, fixPDB will be ignored")
+                fixPDB = False
+
+
+        #############################################################
         ####################### LOADING INPUT #######################
 
         #Load PDB
@@ -361,6 +375,7 @@ class CoarseGrainedBase:
             inputStructure = PDBParser().get_structure(name,inputPDBfilePath)
 
             if fixPDB:
+
                 self.logger.info("Fixing PDB file ...")
 
                 #Write each model in inputStructure to file
@@ -389,27 +404,15 @@ class CoarseGrainedBase:
 
                     ############ FIX TMP.PDB ############
 
-                    try:
+                    fixer = PDBFixer(filename = "tmp.pdb")
 
-                        from pdbfixer import PDBFixer
-                        from openmm.app import PDBFile
+                    fixer.missingResidues = {}
 
-                        fixer = PDBFixer(filename = "tmp.pdb")
+                    fixer.findMissingAtoms()
+                    fixer.addMissingAtoms()
+                    fixer.addMissingHydrogens(7.0)
 
-                        fixer.missingResidues = {}
-
-                        fixer.findMissingAtoms()
-                        fixer.addMissingAtoms()
-                        fixer.addMissingHydrogens(7.0)
-
-                        PDBFile.writeFile(fixer.topology, fixer.positions, open("fixed.pdb", 'w'), keepIds=True)
-
-                    except:
-
-                        self.logger.warning("PDBFixer not found. PDB file will not be fixed.")
-
-                        #Copy tmp.pdb to fixed.pdb
-                        shutil.copyfile("tmp.pdb","fixed.pdb")
+                    PDBFile.writeFile(fixer.topology, fixer.positions, open("fixed.pdb", 'w'), keepIds=True)
 
                     ############ UPDATE MODEL ############
 
