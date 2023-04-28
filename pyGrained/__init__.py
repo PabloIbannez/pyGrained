@@ -1,6 +1,8 @@
 import sys,os
 import gc
 
+import shutil
+
 from tqdm import tqdm
 
 import uuid
@@ -8,9 +10,6 @@ import uuid
 import pathlib
 
 import numpy as np
-
-from pdbfixer import PDBFixer
-from openmm.app import PDBFile
 
 from Bio.PDB import *
 from Bio.Data.SCOPData import protein_letters_3to1
@@ -390,15 +389,27 @@ class CoarseGrainedBase:
 
                     ############ FIX TMP.PDB ############
 
-                    fixer = PDBFixer(filename = "tmp.pdb")
+                    try:
 
-                    fixer.missingResidues = {}
+                        from pdbfixer import PDBFixer
+                        from openmm.app import PDBFile
 
-                    fixer.findMissingAtoms()
-                    fixer.addMissingAtoms()
-                    fixer.addMissingHydrogens(7.0)
+                        fixer = PDBFixer(filename = "tmp.pdb")
 
-                    PDBFile.writeFile(fixer.topology, fixer.positions, open("fixed.pdb", 'w'), keepIds=True)
+                        fixer.missingResidues = {}
+
+                        fixer.findMissingAtoms()
+                        fixer.addMissingAtoms()
+                        fixer.addMissingHydrogens(7.0)
+
+                        PDBFile.writeFile(fixer.topology, fixer.positions, open("fixed.pdb", 'w'), keepIds=True)
+
+                    except:
+
+                        self.logger.warning("PDBFixer not found. PDB file will not be fixed.")
+
+                        #Copy tmp.pdb to fixed.pdb
+                        shutil.copyfile("tmp.pdb","fixed.pdb")
 
                     ############ UPDATE MODEL ############
 
