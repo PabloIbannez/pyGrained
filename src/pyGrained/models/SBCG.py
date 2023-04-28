@@ -483,14 +483,13 @@ class SBCG(CoarseGrainedBase):
         forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
         forceField["steric"]["data"]       = []
 
-        nameIndex   = types["labels"].index("name")
-        radiusIndex = types["labels"].index("radius")
-        for t1,t2 in itertools.product(types["data"],repeat=2):
-            tName1 = t1[nameIndex]
-            tName2 = t2[nameIndex]
+        for t1,t2 in itertools.product(types.keys(),repeat=2):
+            tName1 = types[t1]["name"]
+            tName2 = types[t2]["name"]
 
-            tRadius1 = t1[radiusIndex]
-            tRadius2 = t2[radiusIndex]
+            tRadius1 = types[t1]["radius"]
+            tRadius2 = types[t2]["radius"]
+
             forceField["steric"]["data"].append([tName1,tName2,1.0,round(tRadius1+tRadius2,3)])
 
         #self.logger.debug(f"Force field: {forceField}")

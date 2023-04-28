@@ -1,5 +1,7 @@
 import logging
 
+import copy
+
 def generateSpreadedCgMap(spreadedStructure,
                           classes,
                           aggregatedCgStructure,
@@ -58,16 +60,12 @@ def generateTypes(spreadedCgStructure,SASA=False):
 
     logger.info(f"Generating types ...")
 
-    types = {}
-    types["labels"] = ["name", "mass", "radius", "charge"]
-    types["data"]   = []
-
     #Generate types
-    typesTmp={}
+    types={}
     for atm in list(spreadedCgStructure.get_models())[0].get_atoms():
         typeName = atm.get_name()
 
-        if typeName not in typesTmp.keys():
+        if typeName not in types.keys():
 
             mass      = round(atm.mass,3)
             radius    = round(atm.radius,3)
@@ -78,20 +76,13 @@ def generateTypes(spreadedCgStructure,SASA=False):
                 totalSASApolar  = round(atm.totalSASApolar,3)
                 totalSASAapolar = round(atm.totalSASAapolar,3)
 
-            typesTmp[typeName]={"name":typeName,"mass":mass,"radius":radius,"charge":charge}
-
-    for t in typesTmp.keys():
-        name   = typesTmp[t]["name"]
-        mass   = typesTmp[t]["mass"]
-        radius = typesTmp[t]["radius"]
-        charge = typesTmp[t]["charge"]
-        types["data"].append([name,mass,radius,charge])
+            types[typeName]={"name":typeName,"mass":mass,"radius":radius,"charge":charge}
 
     logger.debug(f"Types: {types}")
     logger.info(f"Types generation end")
 
     #Types end
-    return types
+    return copy.deepcopy(types)
 
 def generateState(spreadedCgStructure):
 

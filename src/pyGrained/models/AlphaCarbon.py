@@ -153,9 +153,9 @@ class AlphaCarbon(CoarseGrainedBase):
 
         #############################################################
 
-        types     = self.setTypes(generateTypes(spreadedCgStructure))
-        state     = self.setState(generateState(spreadedCgStructure))
-        structure = self.setStructure(generateStructure(spreadedCgStructure))
+        self.setTypes(generateTypes(spreadedCgStructure))
+        self.setState(generateState(spreadedCgStructure))
+        self.setStructure(generateStructure(spreadedCgStructure))
 
 class SelfOrganizedPolymer(AlphaCarbon):
 
@@ -252,11 +252,10 @@ class SelfOrganizedPolymer(AlphaCarbon):
         forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
         forceField["steric"]["data"]       = []
 
-        nameIndex   = self.getTypes()["labels"].index("name")
-        for t1,t2 in itertools.product(self.getTypes()["data"],repeat=2):
-            tName1 = t1[nameIndex]
-            tName2 = t2[nameIndex]
 
+        types     = self.getTypes()
+        typeNames = [types[t]["name"] for t in types.keys()]
+        for tName1,tName2 in itertools.product(typeNames,repeat=2):
             forceField["steric"]["data"].append([tName1,tName2,1.0,3.8])
 
         #self.logger.debug(f"Force field: {forceField}")
@@ -376,6 +375,18 @@ class KaranicolasBrooks(AlphaCarbon):
         else:
             pass
 
+        ########################## STATE ############################
+
+        state = self.getState()
+
+        state["labels"].append("innerRadius")
+
+        for index in range(len(state["data"])):
+            id_ = state["data"][index][0]
+            state["data"][index].append(innerRadius[id_])
+
+        self.setState(state)
+
         ######################## FORCE FIELD ########################
 
         #ForceField
@@ -449,7 +460,7 @@ class KaranicolasBrooks(AlphaCarbon):
 
         forceField["nativeContacts"] = {}
         forceField["nativeContacts"]["type"]       = ["Bond2","LennardJonesKaranicolasBrooks"]
-        forceField["nativeContacts"]["parameters"] = {"epsilon":1.0}
+        forceField["nativeContacts"]["parameters"] = {}
         forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "sigma", "epsilon"]
         forceField["nativeContacts"]["data"]       = []
 
@@ -458,7 +469,7 @@ class KaranicolasBrooks(AlphaCarbon):
             pos_i = beads[id_i].get_coord()
             pos_j = beads[id_j].get_coord()
             dst = round(np.linalg.norm(pos_i-pos_j),3)
-            forceField["nativeContacts"]["data"].append([id_i,id_j,dst])
+            forceField["nativeContacts"]["data"].append([id_i,id_j,dst,epsNC])
 
         #Verlet list
 
@@ -490,15 +501,10 @@ class KaranicolasBrooks(AlphaCarbon):
         #Steric
 
         forceField["steric"] = {}
-        forceField["steric"]["type"]       = ["NonBonded", "Steric12Inner"]
+        forceField["steric"]["type"]       = ["NonBonded", "StericInner12"]
         forceField["steric"]["parameters"] = {"cutOffFactor": 2.5,
                                               "condition":"intra",
                                               "epsilon":1.5e-5*epsRes/21.5}
-        forceField["steric"]["labels"]     = ["id","innerRadius"]
-        forceField["steric"]["data"]       = []
-
-        for i,r in enumerate(innerRadius):
-            forceField["steric"]["data"].append([i,r])
 
         #self.logger.debug(f"Force field: {forceField}")
         self.logger.info(f"Force field generation end")
