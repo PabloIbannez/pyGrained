@@ -49,6 +49,20 @@ class CustomFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt,datefmt='%d/%m/%Y %H:%M:%S')
         return formatter.format(record)
 
+#############################################################
+####################### SET UP LOGGER #######################
+
+# Set up logger
+
+logger = logging.getLogger(f"pyGrained")
+logger.setLevel(logging.DEBUG)
+
+clog = logging.StreamHandler()
+clog.setLevel(logging.DEBUG)
+
+clog.setFormatter(CustomFormatter())
+logger.addHandler(clog)
+
 class CoarseGrainedBase:
 
     def __getClasses(self,structure):
@@ -329,23 +343,13 @@ class CoarseGrainedBase:
         self._type = tpy
         self._name = name
 
-        #############################################################
-        ####################### SET UP LOGGER #######################
-
-        # Set up logger
-        loggerName   = f"pyGrained"
-
         self.logger = logging.getLogger(f"pyGrained")
-        self.logger.setLevel(logging.DEBUG)
 
-        self.clog = logging.StreamHandler()
+        #Set all loggers level
         if debug:
-            self.clog.setLevel(logging.DEBUG) #<----
+            self.logger.setLevel(logging.DEBUG)
         else:
-            self.clog.setLevel(logging.INFO) #<----
-
-        self.clog.setFormatter(CustomFormatter())
-        self.logger.addHandler(self.clog)
+            self.logger.setLevel(logging.INFO)
 
         #############################################################
         ##################### TRY LOAD PDBFIXER #####################
