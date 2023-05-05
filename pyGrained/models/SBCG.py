@@ -135,12 +135,13 @@ class SBCG(CoarseGrainedBase):
             res1Index = atomsCA[nc[0]].get_parent().get_id()[1]
             res2Index = atomsCA[nc[1]].get_parent().get_id()[1]
 
+            differentChain = (ch1Index != ch2Index or mdl1Index != mdl2Index)
+
             if (ch1Index in chainsCg) and (ch2Index in chainsCg):
-                if ch1Index != ch2Index or mdl1Index != mdl2Index:
-                    if abs(res1Index-res2Index) > n:
-                        bead1Index = atom2bead[atomsCA[nc[0]].get_serial_number()]
-                        bead2Index = atom2bead[atomsCA[nc[1]].get_serial_number()]
-                        ncBeadsTmp.append((bead1Index,bead2Index))
+                if abs(res1Index-res2Index) > n or differentChain:
+                    bead1Index = atom2bead[atomsCA[nc[0]].get_serial_number()]
+                    bead2Index = atom2bead[atomsCA[nc[1]].get_serial_number()]
+                    ncBeadsTmp.append((bead1Index,bead2Index))
             else:
                 self.logger.debug(f"While generating native contacts, the chain {ch1Index} or the chain {ch2Index} has been found in the all atom model but not in CG")
 
