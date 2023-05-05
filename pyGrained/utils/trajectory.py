@@ -1,4 +1,14 @@
+import logging
+
+import MDAnalysis as mda
+
+from tqdm import tqdm
+
 def applyCoarseGrainedOverTrajectory(cgMap,trajPDB,trajDCD):
+
+    logger = logging.getLogger("pyGrained")
+
+    logger.info("Applying coarse grained map to trajectory")
 
     mdls = [bead[0] for bead in cgMap]
     m0   = min(mdls)
@@ -9,7 +19,7 @@ def applyCoarseGrainedOverTrajectory(cgMap,trajPDB,trajDCD):
     chains = [ch.segid for ch in universe.segments]
 
     cg2sel = {}
-    for bead in m0CgMap.keys():
+    for bead in tqdm(m0CgMap.keys()):
         ch_cg  = bead[1]
         res_cg = bead[2]
         atm_cg = bead[3]

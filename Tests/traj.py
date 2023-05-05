@@ -1,48 +1,46 @@
 import os
 
-import pyGrained
-import pyGrained.models
+from pyGrained.models.SBCG import SBCG
+
+from pyGrained.utils.output import writeSP
+from pyGrained.utils.trajectory import applyCoarseGrainedOverTrajectory
 
 dataPath = "./data/"
 
 resolution = 300
 steps     = 10000
 
-#aliasFilepathMinBeads = [["ubiq", dataPath+"ubiquitin/36b689z4lb.pqr",0],
-#                         ["cox",  dataPath+"cox/5xs5.pdb",5],
-#                         ["p22",  dataPath+"p22/5uu5.pdb",5],
-#                         ["adeno",dataPath+"adeno/6cgv.pdb",10]]
+aliasFilepathMinBeads = [["p22",dataPath+"p22/5uu5.pdb"]]
 
-aliasFilepathMinBeads = [["p22",dataPath+"p22/5uu5.pdb",5]]
+# Check if folder results exists
+if not os.path.exists("./results"):
+    os.makedirs("./results")
 
-outputFile = "testResults"
-outputFileExist = os.path.exists(outputFile)
-if not outputFileExist:
-    os.makedirs(outputFile)
+for a,fl in aliasFilepathMinBeads:
+    out = "./results/" + a
 
-for a,fl,mB in aliasFilepathMinBeads:
-    out = outputFile + "/" + a
-    test = pyGrained.models.SBCG(out+"Test",fl,debug=False)
-    test.generateModel(resolution,steps,minBeads=mB)
+    model = {"SASA":False, #!!!
+             "parameters":{"resolution":resolution,
+                           "steps":steps,
+                           "bondsModel":{"name":"ENM",
+                                         "parameters":{"enmCut":12.0,
+                                                       "K":10.0}},
+                           "nativeContactsModel":{"name":"CA",
+                                                  "parameters":{"ncCut":8.0,
+                                                                "epsilon":-0.5,
+                                                                "D":1.2}}}
+             }
+    test = SBCG(a,fl,model,debug=True)
 
-    model = {"bondsModel":{"name":"ENM",
-                           "parameters":{"enmCut":12.0}},
-             "nativeContactsModel":{"name":"CA",
-                                    "parameters":{"ncCut":8.0}}
-            }
-
-    test.generateTopology(model)
-
-    test.generateSimulation(out+"SimulationSbcgTest.json",5.0,1.0,1.2)
-    test.writePDBcg(out+"SbcgTest.pdb")
-    test.writeSPcg(out+"SbcgTest.sp")
+    writeSP(test.getSpreadedCgStructure(),out+"_SBCG.sp")
 
     if a == "p22":
 
         trajPDB = dataPath + "p22/5uu5_hexon_traj/init_prot.pdb"
         trajDCD = dataPath + "p22/5uu5_hexon_traj/traj_prot.dcd"
 
-        cgTraj = test.applyCoarseGrainedOverTrajectory(trajPDB,trajDCD)
+        cgTraj = applyCoarseGrainedOverTrajectory(test.getSpreadedCgMap(),
+                                                  trajPDB,trajDCD)
 
         N=len(cgTraj[0].keys())
 
