@@ -4,9 +4,6 @@ import warnings
 
 import itertools
 
-import json
-import jsbeautifier
-
 from tqdm import tqdm
 
 import numpy as np
@@ -163,11 +160,13 @@ class SBCG(CoarseGrainedBase):
                  params:dict,
                  debug = False):
 
+        fixPDB = params.get("fixPDB",False)
         SASA = params.get("SASA",True)
 
         super().__init__(tpy  = "SBCG",
                          name = name,
                          inputPDBfilePath = inputPDBfilePath,
+                         fixPDB = fixPDB,
                          removeHydrogens = True,removeNucleics  = True,
                          centerInput = params.get("centerInput",True),
                          SASA = SASA,

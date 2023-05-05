@@ -1,0 +1,2 @@
+include pyGrained/data/*
+include pyGrained/utils/computeK/computeK.cpp

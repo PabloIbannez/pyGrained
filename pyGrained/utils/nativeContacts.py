@@ -148,7 +148,7 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
     nativeContacts = {}
 
     atoms = list(structure.get_atoms())
-    for index in indicesCA:
+    for index in tqdm(indicesCA):
         for neig in neighboursCA[index]:
 
             index1 = index
@@ -166,7 +166,12 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
             chain1 = res1.get_parent().get_id()
             chain2 = res2.get_parent().get_id()
 
-            if chain1 == chain2 and abs(res1Seq - res2Seq) <= nexcl:
+            mdl1   = res1.get_parent().get_parent().get_id()
+            mdl2   = res1.get_parent().get_parent().get_id()
+
+            differentChain = ((mdl1 != mdl2) or (chain1 != chain2))
+
+            if not differentChain and abs(res1Seq - res2Seq) <= nexcl:
                 continue
             else:
                 c = 0
@@ -234,29 +239,29 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
 
                     #res1_prev,res2
                     if res1_prev:
-                        if abs(res1_prev.get_id()[1] - res2Seq) > nexcl:
+                        if abs(res1_prev.get_id()[1] - res2Seq) > nexcl or differentChain:
                             orientationalHydrogenBondCount += 1.0
 
                     #res1,res2_prev
                     if res2_prev:
-                        if abs(res1Seq - res2_prev.get_id()[1]) > nexcl:
+                        if abs(res1Seq - res2_prev.get_id()[1]) > nexcl or differentChain:
                             orientationalHydrogenBondCount += 1.0
 
                     #res1_next,res2
                     if res1_next:
-                        if abs(res1_next.get_id()[1] - res2Seq) > nexcl:
+                        if abs(res1_next.get_id()[1] - res2Seq) > nexcl or differentChain:
                             orientationalHydrogenBondCount += 1.0
 
                     #res1,res2_next
                     if res2_next:
-                        if abs(res1Seq - res2_next.get_id()[1]) > nexcl:
+                        if abs(res1Seq - res2_next.get_id()[1]) > nexcl or differentChain:
                             orientationalHydrogenBondCount += 1.0
 
                     oe = float(nadd)/float(orientationalHydrogenBondCount)
 
                     #res1_prev,res2
                     if res1_prev:
-                        if abs(res1_prev.get_id()[1] - res2Seq) > nexcl:
+                        if abs(res1_prev.get_id()[1] - res2Seq) > nexcl or differentChain:
                             neig1 = atoms.index(res1_prev["CA"])
                             neig2 = index2
 
@@ -268,7 +273,7 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
 
                     #res1,res2_prev
                     if res2_prev:
-                        if abs(res1Seq - res2_prev.get_id()[1]) > nexcl:
+                        if abs(res1Seq - res2_prev.get_id()[1]) > nexcl or differentChain:
                             neig1 = index1
                             neig2 = atoms.index(res2_prev["CA"])
 
@@ -280,7 +285,7 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
 
                     #res1_next,res2
                     if res1_next:
-                        if abs(res1_next.get_id()[1] - res2Seq) > nexcl:
+                        if abs(res1_next.get_id()[1] - res2Seq) > nexcl or differentChain:
                             neig1 = atoms.index(res1_next["CA"])
                             neig2 = index2
 
@@ -292,7 +297,7 @@ def generateKaranicolasBrooksNativeContactsFromStructure(structure,cutOff,nexcl)
 
                     #res1,res2_next
                     if res2_next:
-                        if abs(res1Seq - res2_next.get_id()[1]) > nexcl:
+                        if abs(res1Seq - res2_next.get_id()[1]) > nexcl or differentChain:
                             neig1 = index1
                             neig2 = atoms.index(res2_next["CA"])
 

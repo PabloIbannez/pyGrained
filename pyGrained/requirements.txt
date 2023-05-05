@@ -1,7 +1,0 @@
-Bio==1.5.3
-freesasa==2.1.0
-jsbeautifier==1.14.3
-MDAnalysis==2.4.1
-numpy==1.23.3
-scipy==1.8.0
-tqdm==4.63.0

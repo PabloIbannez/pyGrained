@@ -1,13 +1,15 @@
 from pyGrained.models.SBCG import SBCG
+from pyGrained.models.AlphaCarbon import SelfOrganizedPolymer
 from pyGrained.models.AlphaCarbon import KaranicolasBrooks
 
 from pyGrained.utils.output import writeSP
 
+pathToPDB = "./data/cox/5xs5_fixed.pdb"
+outputFile = "cox"
+
+# SBCG
 resolution = 300 #Number of atoms per bead
 steps      = 10000 #Number of minimization steps
-
-pathToPDB = "./data/1egl/1egl.pdb"
-outputFile = "1egl"
 
 #model = {"SASA":True,
 #         "parameters":{"resolution":resolution,
@@ -20,13 +22,18 @@ outputFile = "1egl"
 #                                                            "epsilon":-0.5,
 #                                                            "D":1.2}}}
 #         }
+#testSBCG = SBCG("cox",pathToPDB,model,debug=True)
+#writeSP(testSBCG.getSpreadedCgStructure(),outputFile+"_SBCG.sp")
 #
-#test = SBCG("cox",pathToPDB,model,debug=True)
+## Self-Organized Polymer
+#model = {}
+#testSOP = SelfOrganizedPolymer("cox",pathToPDB,model,debug=True)
+#writeSP(testSOP.getSpreadedCgStructure(),outputFile+"_SOP.sp")
 
+# Karanicolas-Brooks
 model = {}
+testKB = KaranicolasBrooks("cox",pathToPDB,model,debug=True)
+writeSP(testKB.getSpreadedCgStructure(),outputFile+"_KB.sp")
 
-test = KaranicolasBrooks("1egl",pathToPDB,model,debug=True)
-
-writeSP(test.getSpreadedCgStructure(),"1egl.sp")
 
 

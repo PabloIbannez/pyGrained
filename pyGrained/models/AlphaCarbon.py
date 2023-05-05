@@ -165,9 +165,11 @@ class SelfOrganizedPolymer(AlphaCarbon):
                  params:dict,
                  debug = False):
 
+        fixPDB = params.get("fixPDB",False)
+
         super().__init__(name   = name,
                          inputPDBfilePath = inputPDBfilePath,
-                         fixPDB = False,
+                         fixPDB = fixPDB,
                          params = params,
                          debug  = debug)
 
@@ -273,6 +275,8 @@ class KaranicolasBrooks(AlphaCarbon):
                  params:dict,
                  debug = False):
 
+        fixPDB = params.get("fixPDB",True) # We need hydrogens to be present in the PDB file
+
         Tf = 350
         epsRes = Tf*0.0054
 
@@ -281,7 +285,7 @@ class KaranicolasBrooks(AlphaCarbon):
 
         super().__init__(name   = name,
                          inputPDBfilePath = inputPDBfilePath,
-                         fixPDB = True,
+                         fixPDB = fixPDB,
                          params = params,
                          debug  = debug)
 

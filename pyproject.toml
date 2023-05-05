@@ -1,21 +1,29 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools", "pybind11"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "pyGrained"
-version = "0.0.1"
+name="pyGrained"
+version="1.0.0"
 authors = [
-  { name="Pablo Ibanez Freire", email="p.ibanez.fre@gmail.com" },
+    {name = "Pablo Ibáñez-Freire", email = "p.ibanez.fre@gmail.com"},
 ]
-description = "Python library for the development of protein coarse grained models."
+description = "Coarse grained library for Python"
 readme = "README.md"
 requires-python = ">=3.7"
+license = {text = "MIT License"}
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-    "Operating System :: OS Independent",
+        "Development Status :: 3 - Alpha",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+]
+dependencies = [
+    "pathlib","uuid","numpy","scipy"
 ]
 
-[project.urls]
-"Homepage" = "https://github.com/PabloIbannez/pyGrained"
-"Bug Tracker" = "https://github.com/PabloIbannez/pyGrained/issues"
+[options]
+include_package_data = true
