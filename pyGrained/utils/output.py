@@ -16,3 +16,22 @@ def writeSP(structure,outName):
             c   = int("".join([str(ord(i)) for i in bead.get_parent().get_parent().get_id()]))%256
             f.write(f"{pos[0]} {pos[1]} {pos[2]} {r} {c}\n")
 
+def types2global(types):
+
+    labels = set()
+    labels.add("name")
+    for v in types.values():
+        for k in v.keys():
+            labels.add(k)
+
+    data = []
+    for tinfo in types.values():
+        data.append([])
+        for l in labels:
+            if l in tinfo.keys():
+                data[-1].append(tinfo[l])
+
+    glb = {}
+    glb["types"] = {"labels":list(labels).copy(),"data":data.copy()}
+
+    return glb.copy()

@@ -104,6 +104,55 @@ class SBCG(CoarseGrainedBase):
 
         return bondBeads
 
+    def __generateCountBonds(self,structure,cgMap):
+
+        atom2bead = {}
+        chainsCg = set()
+        #Invert map
+        for bead,atomsList in cgMap.items():
+            chId      = bead[1]
+            chainsCg.add(chId) #Not all chains can be in the cg model
+
+            beadIndex = bead[4]
+            for atm in atomsList:
+                atomIndex = atm[4]
+                atom2bead[atomIndex] = beadIndex
+
+        atomsCA      = [atm for atm in structure.get_atoms() if atm.get_name() == "CA"]
+        atomsCACoord = np.asarray([atm.get_coord() for atm in structure.get_atoms() if atm.get_name() == "CA"])
+
+        kd = cKDTree(atomsCACoord)
+        bondCAAtoms = kd.query_pairs(5.0)
+
+        bondBeadsTmp = []
+        for bnd in bondCAAtoms:
+
+            mdl1Index = atomsCA[bnd[0]].get_parent().get_parent().get_parent().get_id()
+            mdl2Index = atomsCA[bnd[1]].get_parent().get_parent().get_parent().get_id()
+
+            ch1Index = atomsCA[bnd[0]].get_parent().get_parent().get_id()
+            ch2Index = atomsCA[bnd[1]].get_parent().get_parent().get_id()
+
+            res1Index = atomsCA[bnd[0]].get_parent().get_id()[1]
+            res2Index = atomsCA[bnd[1]].get_parent().get_id()[1]
+
+            if (ch1Index in chainsCg) and (ch2Index in chainsCg):
+                if ch1Index == ch2Index and mdl1Index == mdl2Index:
+                    if abs(res1Index-res2Index) == 1:
+                        bead1Index = atom2bead[atomsCA[bnd[0]].get_serial_number()]
+                        bead2Index = atom2bead[atomsCA[bnd[1]].get_serial_number()]
+                        if bead1Index != bead2Index:
+                            bondBeadsTmp.append((bead1Index,bead2Index))
+            else:
+                self.logger.debug(f"While generating enm, the chain {ch1Index} or the chain {ch2Index} has been found in the all atom model but not in CG")
+
+        bondBeads = {bnd:0 for bnd in set(bondBeadsTmp)}
+
+        for bnd in bondBeadsTmp:
+            bondBeads[bnd]+=1
+
+        return bondBeads
+
     def __generateNC(self,structure,cgMap,ncCut,n):
 
         atom2bead = {}
@@ -365,6 +414,9 @@ class SBCG(CoarseGrainedBase):
             self.logger.info(f"Generating ENM bonds ...")
             enmCut = bondsModel["parameters"]["enmCut"]
             bonds = self.__generateENM(self.getSpreadedStructure(),spreadedCgMap,enmCut)
+        elif bondsModelName == "count":
+            self.logger.info(f"Generating count bonds ...")
+            bonds = self.__generateCountBonds(self.getSpreadedStructure(),spreadedCgMap)
         else:
             self.logger.error(f"Bonds model {bondsModelName} is not availble")
             raise Exception(f"Bonds model not available")
@@ -372,30 +424,16 @@ class SBCG(CoarseGrainedBase):
         self.logger.info(f"Generating native contacts ...")
 
         nativeContacsModelName = nativeContactsModel["name"]
-        if nativeContacsModelName == "CA":
+        if nativeContacsModelName == "CA" or nativeContacsModelName == "count":
             self.logger.info(f"Generating CA native contacts ...")
-            ncCut = nativeContactsModel["parameters"]["ncCut"]
+            if "parameters" in nativeContactsModel:
+                ncCut = nativeContactsModel["parameters"].get("ncCut",8.0)
+            else:
+                ncCut = 8.0
             nativeContacts = self.__generateNC(self.getSpreadedStructure(),spreadedCgMap,ncCut,2)
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")
-
-        #########################################
-
-        exclusions = {}
-
-        for bead in spreadedCgStructure.get_atoms():
-            exclusions[bead.get_serial_number()]=set()
-
-        for bnd in bonds.keys():
-            id_i,id_j = bnd
-            exclusions[id_i].add(id_j)
-            exclusions[id_j].add(id_i)
-
-        for nc in nativeContacts.keys():
-            id_i,id_j = nc
-            exclusions[id_i].add(id_j)
-            exclusions[id_j].add(id_i)
 
         self.logger.info(f"Topology generation end")
 
@@ -425,6 +463,19 @@ class SBCG(CoarseGrainedBase):
                 pos_j = beads[id_j].get_coord()
                 r0 = np.linalg.norm(pos_i-pos_j)
                 forceField["bonds"]["data"].append([id_i,id_j,r0])
+        elif bondsModelName == "count":
+            forceField["bonds"] = {}
+            forceField["bonds"]["type"]       = ["Bond2","r0Count"]
+            forceField["bonds"]["parameters"] = {}
+            forceField["bonds"]["labels"] = ["id_i", "id_j", "r0", "n"]
+            forceField["bonds"]["data"]   = []
+
+            for bnd in bonds.keys():
+                id_i,id_j = bnd
+                pos_i = beads[id_i].get_coord()
+                pos_j = beads[id_j].get_coord()
+                r0 = np.linalg.norm(pos_i-pos_j)
+                forceField["bonds"]["data"].append([id_i,id_j,r0,bonds[bnd]])
         else:
             self.logger.error(f"Bonds model {bondsModelName} is not availble")
             raise Exception(f"Bonds model not available")
@@ -445,6 +496,20 @@ class SBCG(CoarseGrainedBase):
                 E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
                 D   = nativeContactsModel["parameters"]["D"]
                 forceField["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
+        elif nativeContacsModelName == "count":
+
+            forceField["nativeContacts"] = {}
+            forceField["nativeContacts"]["type"]       = ["Bond2","roCount"]
+            forceField["nativeContacts"]["parameters"] = {}
+            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "n"]
+            forceField["nativeContacts"]["data"]       = []
+
+            for nc in nativeContacts.keys():
+                id_i,id_j = nc
+                pos_i = beads[id_i].get_coord()
+                pos_j = beads[id_j].get_coord()
+                dst = round(np.linalg.norm(pos_i-pos_j),3)
+                forceField["nativeContacts"]["data"].append([id_i,id_j,dst,nativeContacts[nc]])
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")

@@ -165,7 +165,15 @@ class SelfOrganizedPolymer(AlphaCarbon):
                  params:dict,
                  debug = False):
 
+        self.logger.info(f"Creating SelfOrganizedPolymer object {name} from {inputPDBfilePath}")
+
         fixPDB = params.get("fixPDB",False)
+        self.logger.info(f"Fixing PDB: {fixPDB}")
+
+        modelParams = params.get("parameters",{})
+
+        epsNC  = modelParams.get("epsilonNC",1.0)
+        self.logger.info(f"epsilonNC: {epsNC}")
 
         super().__init__(name   = name,
                          inputPDBfilePath = inputPDBfilePath,
@@ -223,7 +231,7 @@ class SelfOrganizedPolymer(AlphaCarbon):
 
         forceField["nativeContacts"] = {}
         forceField["nativeContacts"]["type"]       = ["Bond2","LennardJonesType2Common_epsilon"]
-        forceField["nativeContacts"]["parameters"] = {"epsilon":1.0}
+        forceField["nativeContacts"]["parameters"] = {"epsilon":epsNC}
         forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "sigma"]
         forceField["nativeContacts"]["data"]       = []
 
