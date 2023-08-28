@@ -36,7 +36,7 @@ class AlphaCarbon(CoarseGrainedBase):
                          name = name,
                          inputPDBfilePath = inputPDBfilePath,
                          fixPDB = fixPDB,
-                         removeHydrogens = False,removeNucleics  = True,
+                         removeHetatm = True, removeHydrogens = False,removeNucleics  = True,
                          centerInput = params.get("centerInput",True),
                          SASA = params.get("SASA",False),
                          aggregateChains = params.get("aggregateChains",True),
@@ -165,15 +165,7 @@ class SelfOrganizedPolymer(AlphaCarbon):
                  params:dict,
                  debug = False):
 
-        self.logger.info(f"Creating SelfOrganizedPolymer object {name} from {inputPDBfilePath}")
-
         fixPDB = params.get("fixPDB",False)
-        self.logger.info(f"Fixing PDB: {fixPDB}")
-
-        modelParams = params.get("parameters",{})
-
-        epsNC  = modelParams.get("epsilonNC",1.0)
-        self.logger.info(f"epsilonNC: {epsNC}")
 
         super().__init__(name   = name,
                          inputPDBfilePath = inputPDBfilePath,
@@ -181,11 +173,18 @@ class SelfOrganizedPolymer(AlphaCarbon):
                          params = params,
                          debug  = debug)
 
+        self.logger.info(f"Creating SelfOrganizedPolymer object {name} from {inputPDBfilePath}")
+
+        modelParams = params.get("parameters",{})
+
+        epsNC  = modelParams.get("epsilonNC",1.0)
+        self.logger.info(f"epsilonNC: {epsNC}")
+
         ######################### TOPOLOGY ##########################
 
         cgMap = self.getSpreadedCgMap()
 
-        bonds         = generateBondsFromStructure(self.getSpreadedCgStructure())
+        bonds          = generateBondsFromStructure(self.getSpreadedCgStructure())
         nativeContacts = generateNativeContactsAlphaCarbonByCutOffFromStructure(self.getSpreadedStructure(),8.0,2)
 
         invCgMap = generateInverseIndexMap(cgMap)
@@ -246,7 +245,7 @@ class SelfOrganizedPolymer(AlphaCarbon):
 
         forceField["nl"] = {}
         forceField["nl"]["type"]       = ["VerletConditionalListSet","nonExclIntra_nonExclInter"]
-        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.5}
+        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.3}
         forceField["nl"]["labels"]     = ["id", "id_list"]
         forceField["nl"]["data"]       = []
 
@@ -285,17 +284,18 @@ class KaranicolasBrooks(AlphaCarbon):
 
         fixPDB = params.get("fixPDB",True) # We need hydrogens to be present in the PDB file
 
-        Tf = 350
-        epsRes = Tf*0.0054
-
-        cutOff = 25.0
-        nexcl  = 4
-
         super().__init__(name   = name,
                          inputPDBfilePath = inputPDBfilePath,
                          fixPDB = fixPDB,
                          params = params,
                          debug  = debug)
+
+
+        Tf = 350
+        epsRes = Tf*0.0054
+
+        cutOff = 25.0
+        nexcl  = 4
 
         ######################### TOPOLOGY ##########################
 
@@ -487,7 +487,7 @@ class KaranicolasBrooks(AlphaCarbon):
 
         forceField["nl"] = {}
         forceField["nl"]["type"]       = ["VerletConditionalListSet","nonExclIntra_nonExclInter"]
-        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.5}
+        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.3}
         forceField["nl"]["labels"]     = ["id", "id_list"]
         forceField["nl"]["data"]       = []
 

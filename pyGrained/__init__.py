@@ -334,7 +334,7 @@ class CoarseGrainedBase:
                  tpy:str,name:str,
                  inputPDBfilePath:str,
                  fixPDB = False,
-                 removeHydrogens = True,removeNucleics  = True,
+                 removeHetatm = True, removeHydrogens = True,removeNucleics  = True,
                  centerInput = True,
                  SASA = False,
                  aggregateChains = True,
@@ -456,6 +456,19 @@ class CoarseGrainedBase:
 
         #############################################################
         ########################## REMOVE ###########################
+
+        if removeHetatm:
+            self.logger.info("Removing HETATM ...")
+            res2remove = []
+            chains     = list(inputStructure.get_chains())
+            for i,ch in enumerate(chains):
+                for res in ch:
+                    hetKey = res.get_full_id()[3][0]
+                    if hetKey != " ":
+                        res2remove.append([i,res.id])
+
+            for i,res_id in res2remove:
+                chains[i].detach_child(res_id)
 
         if removeHydrogens:
             self.logger.info(f"Removing hydrogens ...")

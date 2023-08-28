@@ -112,13 +112,26 @@ def generateStructure(spreadedCgStructure):
     logger.info(f"Generating structure ...")
 
     structure = {}
-    structure["labels"] = ["id", "type", "modelId"]
+    structure["labels"] = ["id", "type", "modelId","chainId","resId"]
     structure["data"]   = []
 
+    chains     = []
     for atm in spreadedCgStructure.get_atoms():
         #mdl = atm.get_parent().get_parent().get_parent().get_id()
         mdl = 0 #All atoms are in the same model
-        structure["data"].append([atm.get_serial_number(),atm.get_name(),mdl])
+        ch  = atm.get_parent().get_parent().get_id()
+        res = atm.get_parent().get_id()[1]
+
+        if ch not in chains:
+            chains.append(ch)
+
+        chainIndex = chains.index(ch)
+
+        structure["data"].append([atm.get_serial_number(),
+                                  atm.get_name(),
+                                  mdl,
+                                  chainIndex,
+                                  res])
 
     #logger.debug(f"Structure: {structure}")
     logger.info(f"Structure generation end")

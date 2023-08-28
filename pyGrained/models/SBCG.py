@@ -218,7 +218,7 @@ class SBCG(CoarseGrainedBase):
                          name = name,
                          inputPDBfilePath = inputPDBfilePath,
                          fixPDB = fixPDB,
-                         removeHydrogens = True,removeNucleics  = True,
+                         removeHetatm = True, removeHydrogens = False,removeNucleics  = True,
                          centerInput = params.get("centerInput",True),
                          SASA = SASA,
                          aggregateChains = params.get("aggregateChains",True),
