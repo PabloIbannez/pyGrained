@@ -485,7 +485,7 @@ class CoarseGrainedBase:
 
         if removeNucleics:
             self.logger.info(f"Removing nucleics ...")
-            nucleics = ['A','C','G','U','I','T']
+            nucleics = ['A','C','G','U','I','T','DA','DC','DG','DT','DI','DU']
             ch2remove = set()
             models = list(inputStructure.get_models())
             for i,md in enumerate(models):
