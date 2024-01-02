@@ -157,6 +157,94 @@ class AlphaCarbon(CoarseGrainedBase):
         self.setState(generateState(spreadedCgStructure))
         self.setStructure(generateStructure(spreadedCgStructure))
 
+class ElasticNetworkModel(AlphaCarbon):
+
+    def __generateENM(self,structure,enmCut):
+
+        beads      = [b for b in structure.get_atoms()]
+        beadsCoord = np.asarray([b.get_coord() for b in structure.get_atoms()])
+
+        kd    = cKDTree(beadsCoord)
+        pairs = kd.query_pairs(enmCut)
+
+        bonds = []
+        for p in pairs:
+            index_i = beads[p[0]].get_serial_number()
+            index_j = beads[p[1]].get_serial_number()
+            if index_i < index_j:
+                bonds.append((index_i,index_j))
+            else:
+                bonds.append((index_j,index_i))
+
+        #Sort
+        bonds = sorted(bonds,key=lambda x: x[0])
+
+        if len(list(set(bonds))) != len(bonds):
+            self.logger.error("There are repeated bonds in the ENM.")
+            raise Exception("Error in the ENM generation.")
+
+        return bonds
+
+    def __init__(self,
+                 name:str,
+                 inputPDBfilePath:str,
+                 params:dict,
+                 debug = False):
+
+        fixPDB = params.get("fixPDB",False)
+
+        super().__init__(name   = name,
+                         inputPDBfilePath = inputPDBfilePath,
+                         fixPDB = fixPDB,
+                         params = params,
+                         debug  = debug)
+
+        self.logger.info(f"Creating ENM object {name} from {inputPDBfilePath}")
+
+        modelParams = params.get("parameters",{})
+
+        K      = modelParams.get("K",20.0)
+        enmCut = modelParams.get("enmCut",10.0)
+
+        self.logger.info(f"K: {K}")
+        self.logger.info(f"enmCut: {enmCut}")
+
+        ######################### TOPOLOGY ##########################
+
+        cgMap = self.getSpreadedCgMap()
+
+        bonds = self.__generateENM(self.getSpreadedCgStructure(),enmCut)
+
+        ####################### FORCE FIELD #########################
+
+        #ForceField
+
+        self.logger.info(f"Generating force field ...")
+
+        beads = [b for b in self.getSpreadedCgStructure().get_atoms()]
+
+        forceField = {}
+
+        forceField["bonds"] = {}
+        forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
+        forceField["bonds"]["parameters"] = {"K":K}
+        forceField["bonds"]["labels"] = ["id_i", "id_j", "r0"]
+        forceField["bonds"]["data"]   = []
+
+        for bnd in bonds:
+            id_i,id_j = bnd
+            pos_i = beads[id_i].get_coord()
+            pos_j = beads[id_j].get_coord()
+            r0 = np.linalg.norm(pos_i-pos_j)
+            forceField["bonds"]["data"].append([id_i,id_j,r0])
+
+        #self.logger.debug(f"Force field: {forceField}")
+        self.logger.info(f"Force field generation end")
+
+        #ForceField end
+
+        self.setForceField(forceField)
+
 class SelfOrganizedPolymer(AlphaCarbon):
 
     def __init__(self,
