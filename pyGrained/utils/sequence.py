@@ -1,4 +1,4 @@
-from Bio.Data.SCOPData import protein_letters_3to1
+from Bio.Data.PDBData import protein_letters_3to1
 
 def getChainSequence(chain):
     seqDict = {res.get_id()[1]:protein_letters_3to1[res.get_resname()] for res in chain.get_residues()}

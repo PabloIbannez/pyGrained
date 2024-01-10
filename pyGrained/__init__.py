@@ -10,7 +10,6 @@ import pathlib
 import numpy as np
 
 from Bio.PDB import *
-from Bio.Data.SCOPData import protein_letters_3to1
 
 from scipy.spatial.transform import Rotation
 from string import ascii_uppercase
