@@ -459,6 +459,7 @@ class AdaptiveCG(CoarseGrainedBase):
                 pos_j = beads[id_j].get_coord()
                 dst = round(np.linalg.norm(pos_i-pos_j),3)
                 ## NOTE: removing parameters that I do not use
+                ## NOTE: Maybe we have to put them
                 # E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
                 # D   = nativeContactsModel["parameters"]["D"]
                 forceField["nativeContacts"]["data"].append([id_i,id_j,dst])
@@ -540,8 +541,8 @@ class AdaptiveCG(CoarseGrainedBase):
         # All pairs satisfying the cutoff
         candidate_pairs = kd.query_pairs(cutoff)
 
-        contacts = {}
-        native_contacts = {}
+        contacts = set()
+        native_contacts = set()
         
         for i, j in candidate_pairs:
             bead_i_chain = chain_by_idx[i]
@@ -549,9 +550,9 @@ class AdaptiveCG(CoarseGrainedBase):
 
             # Exclude pairs of the same chain
             if bead_i_chain != bead_j_chain:
-                contacts[(i, j)] = 1
+                contacts.add((i,j))
             elif bead_i_chain == bead_j_chain:
-                native_contacts[(i, j)] = 1
+                native_contacts.add((i, j))
 
         return contacts, native_contacts
 
