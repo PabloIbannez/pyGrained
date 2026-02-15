@@ -433,7 +433,7 @@ class AdaptiveCG(CoarseGrainedBase):
             forceField["bonds"]["labels"] = ["id_i", "id_j", "r0"]
             forceField["bonds"]["data"]   = []
 
-            for bnd in bonds.keys():
+            for bnd in bonds:
                 id_i,id_j = bnd
                 pos_i = beads[id_i].get_coord()
                 pos_j = beads[id_j].get_coord()
@@ -453,7 +453,7 @@ class AdaptiveCG(CoarseGrainedBase):
             # forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
             forceField["nativeContacts"]["data"]       = []
 
-            for nc in nativeContacts.keys():
+            for nc in nativeContacts:
                 id_i,id_j = nc
                 pos_i = beads[id_i].get_coord()
                 pos_j = beads[id_j].get_coord()
@@ -481,12 +481,12 @@ class AdaptiveCG(CoarseGrainedBase):
         for bead in self.spreadedCgStructure.get_atoms():
             exclusions[bead.get_serial_number()]=set()
 
-        for bnd in bonds.keys():
+        for bnd in bonds:
             id_i,id_j = bnd
             exclusions[id_i].add(id_j)
             exclusions[id_j].add(id_i)
 
-        for nc in nativeContacts.keys():
+        for nc in nativeContacts:
             id_i,id_j = nc
             exclusions[id_i].add(id_j)
             exclusions[id_j].add(id_i)
