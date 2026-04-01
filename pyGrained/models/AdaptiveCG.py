@@ -395,22 +395,20 @@ class AdaptiveCG(CoarseGrainedBase):
 
         #############################################################
 
-        self.logger.info(f"Generating bonds ...")
+        self.logger.info(f"Generating bonds and native contacts...")
 
         bondsModelName = bondsModel["name"]
+        nativeContacsModelName = nativeContactsModel["name"]
         ## TODO: add my own bonds model, with a cut off 
         if bondsModelName == "AdaptiveCG":
             self.logger.info(f"Generating AdaptiveCG bonds ...")
-            adaptiveCGCut = bondsModel["parameters"]["adaptiveCGCut"]
-            bonds, nativeContacts = self.__generateAdaptiveCGBonds(self.spreadedCgStructure,adaptiveCGCut)
+            adaptiveCGBondCut = bondsModel["parameters"]["adaptiveCGBondsCut"]
+            adaptiveCGNativeContactCut = nativeContactsModel["parameters"]["adaptiveCGNativeContactsCut"]
+            bonds, nativeContacts = self.__generateAdaptiveCGBonds(self.spreadedCgStructure,adaptiveCGBondCut,adaptiveCGNativeContactCut)
         else:
             self.logger.error(f"Bonds model {bondsModelName} is not availble")
             raise Exception(f"Bonds model not available")
 
-        self.logger.info(f"Generating native contacts ...")
-
-        nativeContacsModelName = nativeContactsModel["name"]
-       
 
         self.logger.info(f"Topology generation end")
         #########################################
@@ -429,7 +427,7 @@ class AdaptiveCG(CoarseGrainedBase):
             forceField["bonds"] = {}
             forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
             forceField["bonds"]["parameters"] = {}
-            # forceField["bonds"]["parameters"]["K"] = bondsModel["parameters"]["K"]
+            forceField["bonds"]["parameters"]["K"] = bondsModel["parameters"]["K"]
             forceField["bonds"]["labels"] = ["id_i", "id_j", "r0"]
             forceField["bonds"]["data"]   = []
 
@@ -449,8 +447,8 @@ class AdaptiveCG(CoarseGrainedBase):
             forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
             forceField["nativeContacts"]["parameters"] = {"eps0":1.0}
             ## NOTE: removing parameters that I do not use
-            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0"]
-            # forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
+            # forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0"]
+            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
             forceField["nativeContacts"]["data"]       = []
 
             for nc in nativeContacts.keys():
@@ -458,12 +456,9 @@ class AdaptiveCG(CoarseGrainedBase):
                 pos_i = beads[id_i].get_coord()
                 pos_j = beads[id_j].get_coord()
                 dst = round(np.linalg.norm(pos_i-pos_j),3)
-                ## NOTE: removing parameters that I do not use
-                ## NOTE: Maybe we have to put them
-                # E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
-                # D   = nativeContactsModel["parameters"]["D"]
-                forceField["nativeContacts"]["data"].append([id_i,id_j,dst])
-                # forceField["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
+                E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
+                D   = nativeContactsModel["parameters"]["D"]
+                forceField["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")
@@ -528,10 +523,12 @@ class AdaptiveCG(CoarseGrainedBase):
         self.setStructure(structure)
         self.setForceField(forceField)
 
-    def __generateAdaptiveCGBonds(self,cgstructure,cutoff):
-        ## Get chains
+    def __generateAdaptiveCGBonds(self,cgstructure,bond_cutoff, native_contacts_cutoff):
+         ## Get chains
         beads = np.array([i for i in cgstructure.get_atoms()])
+        bead_names = np.array([i.name for i in cgstructure.get_atoms()])
         chain_by_idx = np.array([i.get_parent().get_parent().get_id() for i in beads])
+        model_by_idx = np.array([i.get_parent().get_parent().get_parent().get_id() for i in beads])
         
         ## Get coords
         coords = np.array([i.get_coord() for i in cgstructure.get_atoms()])
@@ -539,22 +536,112 @@ class AdaptiveCG(CoarseGrainedBase):
         kd = cKDTree(coords)
 
         # All pairs satisfying the cutoff
-        candidate_pairs = kd.query_pairs(cutoff)
+        candidate_bond_pairs = kd.query_pairs(bond_cutoff)
 
-        contacts = set()
-        native_contacts = set()
+        bonds = {}
         
-        for i, j in candidate_pairs:
+        for i, j in candidate_bond_pairs:
             bead_i_chain = chain_by_idx[i]
             bead_j_chain = chain_by_idx[j]
+            bead_i_modelIdx = model_by_idx[i]
+            bead_j_modelIdx = model_by_idx[j]
 
             # Exclude pairs of the same chain
-            if bead_i_chain != bead_j_chain:
-                contacts.add((i,j))
-            elif bead_i_chain == bead_j_chain:
-                native_contacts.add((i, j))
+            # if bead_i_chain != bead_j_chain:
+            #     contacts[(i, j)] = 1
+            # elif bead_i_chain == bead_j_chain:
+            #     native_contacts[(i, j)] = 1
+            ## This flipped
+            ## Bonds should be within chain
+            # if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
+            #     bonds[(i, j)] = 1
+            # elif bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
+            #     native_contacts[(i, j)] = 1
 
-        return contacts, native_contacts
+            # if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
+            #     native_contacts[(i, j)] = 1
+            if bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
+                bonds[(i, j)] = 1
+        
+        candidate_native_contact_pairs = kd.query_pairs(native_contacts_cutoff)
+        native_contacts = {}
+
+        for i, j in candidate_native_contact_pairs:
+            bead_i_chain = chain_by_idx[i]
+            bead_j_chain = chain_by_idx[j]
+            bead_i_modelIdx = model_by_idx[i]
+            bead_j_modelIdx = model_by_idx[j]
+
+            if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
+                native_contacts[(i, j)] = 1
+            # if bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
+            #     bonds[(i, j)] = 1
+
+        ## Avoid getting isolated beads in native contacts
+        # import networkx as nx
+
+        # for clsName in self.getClasses().keys():
+
+        #     chName = self.getClasses()[clsName]["leader"]
+        #     nodes = np.where(chain_by_idx == chName)[0]
+         
+        #     G = nx.Graph()
+        #     G.add_nodes_from(nodes)
+         
+        #     ## Only contacts between beads in nodes
+        #     for (node_a, node_b), _ in native_contacts.items():
+        #         if node_a in nodes and node_b in nodes:
+        #             G.add_edge(node_a, node_b)
+
+        #         ## Find groups of connected beads in native contacts
+        #     components = list(nx.connected_components(G))
+        #     components_min_distances = np.eye(len(components), len(components))
+        #     np.fill_diagonal(components_min_distances, np.inf)
+        #     nodes_min_distance_btw_components = {}
+        #     # nodes_min_distance_btw_components = np.eye(len(components), len(components))
+
+        #     if len(components) > 1:
+
+        #         for cc_a, cc_b in itertools.combinations(range(len(components)), 2):
+                    
+        #             min_dist = np.inf
+        #             min_dist_pair = None
+        #             cc_a_nodes = np.array(list(components[cc_a]), dtype=int)
+        #             cc_b_nodes = np.array(list(components[cc_b]), dtype=int)
+        #             tmp_coords_cc_a = coords[cc_a_nodes]
+        #             tmp_coords_cc_b = coords[cc_b_nodes]
+        #             for node_b_idx, node_b_coords in enumerate(tmp_coords_cc_b):
+        #                 dist = np.linalg.norm(tmp_coords_cc_a - node_b_coords, axis=1)
+        #                 tmp_min_dist = np.min(dist)
+        #                 if tmp_min_dist < min_dist:
+        #                     min_dist = tmp_min_dist
+        #                     min_dist_pair = (int(cc_a_nodes[np.argmin(dist)]), int(cc_b_nodes[node_b_idx]))
+        #             components_min_distances[cc_a, cc_b] = min_dist
+        #             components_min_distances[cc_b, cc_a] = min_dist
+        #             nodes_min_distance_btw_components[(cc_b, cc_a)] = min_dist_pair
+        #             nodes_min_distance_btw_components[(cc_a, cc_b)] = min_dist_pair
+                
+        #         ## Creating the native contact
+        #         for idx, dist_array in enumerate(components_min_distances[0:-1]):
+        #             cc_b = np.argmin(dist_array)
+        #             cc_a = idx
+        #             beads_in_min_distance = nodes_min_distance_btw_components[(cc_a, cc_b)]
+        #             i, j = beads_in_min_distance
+        #             bead_name_i = bead_names[i]
+        #             bead_name_j = bead_names[j]
+        #             # import pdb;pdb.set_trace()
+        #             ## Expand to the rest of models
+        #             for model in np.unique(model_by_idx): ##Iterate over models
+        #                 for tmp_chain in self.getClasses()[clsName].get("members"): ## Iterate over chain
+        #                     tmp_bead_idx = np.where((model_by_idx == model) & (chain_by_idx == tmp_chain) & (bead_names == bead_name_i))[0][0]
+        #                     tmp_bead_jdx = np.where((model_by_idx == model) & (chain_by_idx == tmp_chain) & (bead_names == bead_name_j))[0][0]
+        #                     native_contacts[(tmp_bead_idx, tmp_bead_jdx)] = 1
+        #             components_min_distances[cc_a, cc_b] = np.inf
+        #             components_min_distances[cc_b, cc_a] = np.inf
+
+        #         import pdb;pdb.set_trace()
+        ## Remove isolated beads in native contacts
+        return bonds, native_contacts
 
     def write_pdb(self, filename: str):
         from Bio.PDB import PDBIO
@@ -563,7 +650,7 @@ class AdaptiveCG(CoarseGrainedBase):
         io.set_structure(self.spreadedCgStructure)
         io.save(filename)
 
-    def view(self, min_radius = 2.0, max_radius = 8.0, bead_radius=2.0, out_script="/tmp/show_beads.cxc", view=True):
+    def view(self, min_radius = 2.0, max_radius = 8.0, bead_radius=2.0, out_script="/tmp/Adaptive_show_beads.cxc", view=True):
         """
         Visualiza los beads y la estructura original en ChimeraX.
         """
@@ -581,6 +668,7 @@ class AdaptiveCG(CoarseGrainedBase):
         
         beads = np.array([i for i in self.spreadedCgStructure.get_atoms()])
         chain_by_idx = np.array([i.get_parent().get_parent().get_id() for i in beads])
+        model_by_idx = np.array([i.get_parent().get_parent().get_parent().get_id() for i in beads])
         
         ## Save the coarse grained molecule as a PDB file
         self.write_pdb("/tmp/adaptiveCG.pdb")
@@ -603,11 +691,32 @@ class AdaptiveCG(CoarseGrainedBase):
             f.write("style sphere\n")
             f.write("color bychain\n")
            
-            for i, j, _ in self.getForceField()["bonds"]["data"]:
-                f.write(f"distance /{chain_by_idx[i]}@{bead_name_by_idx[i]} /{chain_by_idx[j]}@{bead_name_by_idx[j]} radius 0.2\n")
-            
-            for i, j, _ in self.getForceField()["nativeContacts"]["data"]:
-                f.write(f"distance /{chain_by_idx[i]}@{bead_name_by_idx[i]} /{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
+            # drawn_bonds = []
+            # for i, j, _, _ in self.getForceField()["bonds"]["data"]:
+            #     bond_str = "_".join(np.sort([i, j]).astype(str))
+            #     if bond_str not in drawn_bonds:
+            #         f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+            #         drawn_bonds.append(bond_str)
+            #     # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+            #     # import pdb;pdb.set_trace()
+            # drawn_native_contacts = []
+            # for i, j, _, _, _ in self.getForceField()["nativeContacts"]["data"]:
+            #     nc_str = "_".join(np.sort([i, j]).astype(str))
+            #     if nc_str in drawn_bonds:
+            #         print(nc_str, " already in bonds")
+            #     elif nc_str not in drawn_native_contacts:
+            #         f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
+            #         drawn_native_contacts.append(nc_str)
+
+            for tmp_data in self.getForceField()["bonds"]["data"]:
+                i, j = tmp_data[0], tmp_data[1]
+                f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+                # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+                # import pdb;pdb.set_trace()
+            for tmp_data in self.getForceField()["nativeContacts"]["data"]:
+                i, j = tmp_data[0], tmp_data[1]
+                f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
+                # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
 
             f.write("show #1\n\n")       # show original PDB
 
