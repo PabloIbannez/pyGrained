@@ -398,16 +398,35 @@ class AdaptiveCG(CoarseGrainedBase):
         self.logger.info(f"Generating bonds and native contacts...")
 
         bondsModelName = bondsModel["name"]
-        nativeContacsModelName = nativeContactsModel["name"]
+        # nativeContacsModelName = nativeContactsModel["name"]
         ## TODO: add my own bonds model, with a cut off 
         if bondsModelName == "AdaptiveCG":
             self.logger.info(f"Generating AdaptiveCG bonds ...")
             adaptiveCGBondCut = bondsModel["parameters"]["adaptiveCGBondsCut"]
             adaptiveCGNativeContactCut = nativeContactsModel["parameters"]["adaptiveCGNativeContactsCut"]
             bonds, nativeContacts = self.__generateAdaptiveCGBonds(self.spreadedCgStructure,adaptiveCGBondCut,adaptiveCGNativeContactCut)
+        elif bondsModelName == "ENM":
+            self.logger.info(f"Generating ENM bonds ...")
+            enmCut = bondsModel["parameters"]["enmCut"]
+            bonds = self.__generateENM(self.getSpreadedStructure(),spreadedCgMap,enmCut)
+            nativeContacts = {}
         else:
             self.logger.error(f"Bonds model {bondsModelName} is not availble")
             raise Exception(f"Bonds model not available")
+        
+        nativeContacsModelName = nativeContactsModel["name"]
+        if nativeContacsModelName == "AdaptiveCG":
+            self.info("Already generated native contacts with the AdaptiveCG bonds model.")
+        elif nativeContacsModelName == "CA":
+            self.logger.info(f"Generating CA native contacts ...")
+            if "parameters" in nativeContactsModel:
+                ncCut = nativeContactsModel["parameters"].get("ncCut",8.0)
+            else:
+                ncCut = 8.0
+            nativeContacts = self.__generateNC(self.getSpreadedStructure(),spreadedCgMap,ncCut,2,bonds)
+        else:
+            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
+            raise Exception(f"Native contacts model not available")
 
 
         self.logger.info(f"Topology generation end")
@@ -423,7 +442,7 @@ class AdaptiveCG(CoarseGrainedBase):
         beads = [b for b in self.spreadedCgStructure.get_atoms()]
 
         #Bonds and native contacts
-        if bondsModelName == "AdaptiveCG": ##TODO: this will be the only one left
+        if bondsModelName == "AdaptiveCG" or bondsModelName == "ENM": ##TODO: this will be the only one left
             forceField["bonds"] = {}
             forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
             forceField["bonds"]["parameters"] = {}
@@ -442,7 +461,7 @@ class AdaptiveCG(CoarseGrainedBase):
             raise Exception(f"Bonds model not available")
 
         #Native contacts
-        if nativeContacsModelName == "AdaptiveCG":
+        if nativeContacsModelName == "AdaptiveCG" or nativeContacsModelName == "CA": ##TODO: this will be the only one left
             forceField["nativeContacts"] = {}
             forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
             forceField["nativeContacts"]["parameters"] = {"eps0":1.0}
@@ -523,6 +542,129 @@ class AdaptiveCG(CoarseGrainedBase):
         self.setStructure(structure)
         self.setForceField(forceField)
 
+    ## PHN for testing
+    def __generateENM(self,structure,cgMap,enmCut):
+
+        atom2bead = {}
+        chainsCg = set()
+        #Invert map
+        for bead,atomsList in cgMap.items():
+            chId      = bead[1]
+            chainsCg.add(chId) #Not all chains can be in the cg model
+
+            beadIndex = bead[4]
+            for atm in atomsList:
+                atomIndex = atm[4]
+                atom2bead[atomIndex] = beadIndex
+
+        atomsCA      = [atm for atm in structure.get_atoms() if atm.get_name() == "CA"]
+        atomsCACoord = np.asarray([atm.get_coord() for atm in structure.get_atoms() if atm.get_name() == "CA"])
+
+        kd = cKDTree(atomsCACoord)
+        bondCAAtoms = kd.query_pairs(enmCut)
+
+        bondBeadsTmp = []
+        for bnd in bondCAAtoms:
+
+            mdl1Index = atomsCA[bnd[0]].get_parent().get_parent().get_parent().get_id()
+            mdl2Index = atomsCA[bnd[1]].get_parent().get_parent().get_parent().get_id()
+
+            ch1Index = atomsCA[bnd[0]].get_parent().get_parent().get_id()
+            ch2Index = atomsCA[bnd[1]].get_parent().get_parent().get_id()
+
+            if (ch1Index in chainsCg) and (ch2Index in chainsCg):
+                if ch1Index == ch2Index and mdl1Index == mdl2Index:
+                    bead1Index = atom2bead[atomsCA[bnd[0]].get_serial_number()]
+                    bead2Index = atom2bead[atomsCA[bnd[1]].get_serial_number()]
+                    if bead1Index != bead2Index:
+                        bondBeadsTmp.append((bead1Index,bead2Index))
+            else:
+                self.logger.debug(f"While generating enm, the chain {ch1Index} or the chain {ch2Index} has been found in the all atom model but not in CG")
+
+        bondBeads = {bnd:0 for bnd in set(bondBeadsTmp)}
+
+        for bnd in bondBeadsTmp:
+            bondBeads[bnd]+=1
+        
+
+        filteredBondBeads = {}
+        for (a, b), v in bondBeads.items():
+            key = tuple(sorted((a, b)))
+            if key not in filteredBondBeads:
+                filteredBondBeads[key] = 1
+
+        # filteredBondBeads = {}
+        # for (bead_index_1, bead_index_2), count in bondBeads.items():
+        #     try:
+        #         _ = filteredBondBeads[(bead_index_2, bead_index_1)]
+        #         _ = filteredBondBeads[(bead_index_1, bead_index_2)]
+        #         self.logger.warning(f"Bond between bead {bead_index_1} and bead {bead_index_2} already exists. Skipping.")
+        #     except KeyError:
+        #         filteredBondBeads[(bead_index_1, bead_index_2)] = 1
+            # filteredBondBeads[(bead_index_1, bead_index_2)] = count
+        # import pdb;pdb.set_trace()
+        return filteredBondBeads
+        # return bondBeads
+    
+    def __generateNC(self,structure,cgMap,ncCut,n,bondData):
+
+        atom2bead = {}
+        chainsCg = set()
+        #Invert map
+        for bead,atomsList in cgMap.items():
+            chId      = bead[1]
+            chainsCg.add(chId) #Not all chains could be present in the cg model
+
+            beadIndex = bead[4]
+            for atm in atomsList:
+                atomIndex = atm[4]
+                atom2bead[atomIndex] = beadIndex
+
+        atomsCA      = [atm for atm in structure.get_atoms() if atm.get_name() == "CA"]
+        atomsCACoord = np.asarray([atm.get_coord() for atm in structure.get_atoms() if atm.get_name() == "CA"])
+
+        kd = cKDTree(atomsCACoord)
+        ncCAAtoms = kd.query_pairs(ncCut)
+
+        ncBeadsTmp = []
+        for nc in ncCAAtoms:
+            mdl1Index = atomsCA[nc[0]].get_parent().get_parent().get_parent().get_id()
+            mdl2Index = atomsCA[nc[1]].get_parent().get_parent().get_parent().get_id()
+
+            ch1Index = atomsCA[nc[0]].get_parent().get_parent().get_id()
+            ch2Index = atomsCA[nc[1]].get_parent().get_parent().get_id()
+
+            res1Index = atomsCA[nc[0]].get_parent().get_id()[1]
+            res2Index = atomsCA[nc[1]].get_parent().get_id()[1]
+
+            differentChain = (ch1Index != ch2Index or mdl1Index != mdl2Index)
+
+            if (ch1Index in chainsCg) and (ch2Index in chainsCg):
+                if abs(res1Index-res2Index) > n or differentChain:
+                    bead1Index = atom2bead[atomsCA[nc[0]].get_serial_number()]
+                    bead2Index = atom2bead[atomsCA[nc[1]].get_serial_number()]
+                    if bead1Index != bead2Index:
+                        ncBeadsTmp.append((bead1Index,bead2Index))
+            else:
+                self.logger.debug(f"While generating native contacts, the chain {ch1Index} or the chain {ch2Index} has been found in the all atom model but not in CG")
+
+
+        ncBeads = {nc:0 for nc in set(ncBeadsTmp)}
+
+        for nc in ncBeadsTmp:
+            ncBeads[nc]+=1
+
+        self.logger.info(f"Maximum number of native contacts: {max(ncBeads.values())}")
+
+        ## Remove duplicates and those that are already in bonds
+        filteredNCBeads = {}
+        for (a, b), v in ncBeads.items():
+            key = tuple(sorted((a, b)))
+            # import pdb;pdb.set_trace()
+            if key not in filteredNCBeads and key not in bondData.keys() and (b,a) not in bondData.keys():
+                filteredNCBeads[key] = 1
+        return filteredNCBeads
+    
     def __generateAdaptiveCGBonds(self,cgstructure,bond_cutoff, native_contacts_cutoff):
          ## Get chains
         beads = np.array([i for i in cgstructure.get_atoms()])
@@ -691,34 +833,35 @@ class AdaptiveCG(CoarseGrainedBase):
             f.write("style sphere\n")
             f.write("color bychain\n")
            
-            # drawn_bonds = []
-            # for i, j, _, _ in self.getForceField()["bonds"]["data"]:
-            #     bond_str = "_".join(np.sort([i, j]).astype(str))
-            #     if bond_str not in drawn_bonds:
-            #         f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
-            #         drawn_bonds.append(bond_str)
-            #     # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
-            #     # import pdb;pdb.set_trace()
-            # drawn_native_contacts = []
-            # for i, j, _, _, _ in self.getForceField()["nativeContacts"]["data"]:
-            #     nc_str = "_".join(np.sort([i, j]).astype(str))
-            #     if nc_str in drawn_bonds:
-            #         print(nc_str, " already in bonds")
-            #     elif nc_str not in drawn_native_contacts:
-            #         f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
-            #         drawn_native_contacts.append(nc_str)
-
-            for tmp_data in self.getForceField()["bonds"]["data"]:
-                i, j = tmp_data[0], tmp_data[1]
-                f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+            drawn_bonds = []
+            for i, j, _ in self.getForceField()["bonds"]["data"]:
+                bond_str = "_".join(np.sort([i, j]).astype(str))
+                if bond_str not in drawn_bonds:
+                    f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+                    drawn_bonds.append(bond_str)
                 # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
                 # import pdb;pdb.set_trace()
-            for tmp_data in self.getForceField()["nativeContacts"]["data"]:
-                i, j = tmp_data[0], tmp_data[1]
-                f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
+            drawn_native_contacts = []
+            for i, j, _, _, _ in self.getForceField()["nativeContacts"]["data"]:
+                nc_str = "_".join(np.sort([i, j]).astype(str))
+                if nc_str in drawn_bonds:
+                    print(nc_str, " already in bonds")
+                elif nc_str not in drawn_native_contacts:
+                    f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
+                    drawn_native_contacts.append(nc_str)
+
+            # for tmp_data in self.getForceField()["bonds"]["data"]:
+            #     i, j = tmp_data[0], tmp_data[1]
+            #     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+            #     # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
+            #     # import pdb;pdb.set_trace()
+            # for tmp_data in self.getForceField()["nativeContacts"]["data"]:
+            #     i, j = tmp_data[0], tmp_data[1]
+            #     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
                 # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
 
-            f.write("show #1\n\n")       # show original PDB
+            f.write("show #1 cartoon\n\n")       # show original PDB
+            f.write("hide #1 atoms\n\n")       # show original PDB
 
             f.write("lighting depthCue false\n")  # hide initial beads
             f.write("zoom\n")
