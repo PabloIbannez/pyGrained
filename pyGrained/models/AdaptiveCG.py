@@ -1,3 +1,5 @@
+import random
+
 from .. import CoarseGrainedBase
 
 import numpy as np
@@ -416,7 +418,7 @@ class AdaptiveCG(CoarseGrainedBase):
         
         nativeContacsModelName = nativeContactsModel["name"]
         if nativeContacsModelName == "AdaptiveCG":
-            self.info("Already generated native contacts with the AdaptiveCG bonds model.")
+            self.logger.info("Already generated native contacts with the AdaptiveCG bonds model.")
         elif nativeContacsModelName == "CA":
             self.logger.info(f"Generating CA native contacts ...")
             if "parameters" in nativeContactsModel:
@@ -668,7 +670,7 @@ class AdaptiveCG(CoarseGrainedBase):
     def __generateAdaptiveCGBonds(self,cgstructure,bond_cutoff, native_contacts_cutoff):
          ## Get chains
         beads = np.array([i for i in cgstructure.get_atoms()])
-        bead_names = np.array([i.name for i in cgstructure.get_atoms()])
+        # bead_names = np.array([i.name for i in cgstructure.get_atoms()])
         chain_by_idx = np.array([i.get_parent().get_parent().get_id() for i in beads])
         model_by_idx = np.array([i.get_parent().get_parent().get_parent().get_id() for i in beads])
         
@@ -688,20 +690,6 @@ class AdaptiveCG(CoarseGrainedBase):
             bead_i_modelIdx = model_by_idx[i]
             bead_j_modelIdx = model_by_idx[j]
 
-            # Exclude pairs of the same chain
-            # if bead_i_chain != bead_j_chain:
-            #     contacts[(i, j)] = 1
-            # elif bead_i_chain == bead_j_chain:
-            #     native_contacts[(i, j)] = 1
-            ## This flipped
-            ## Bonds should be within chain
-            # if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
-            #     bonds[(i, j)] = 1
-            # elif bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
-            #     native_contacts[(i, j)] = 1
-
-            # if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
-            #     native_contacts[(i, j)] = 1
             if bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
                 bonds[(i, j)] = 1
         
@@ -716,73 +704,7 @@ class AdaptiveCG(CoarseGrainedBase):
 
             if bead_i_modelIdx != bead_j_modelIdx or bead_i_chain != bead_j_chain:
                 native_contacts[(i, j)] = 1
-            # if bead_i_modelIdx == bead_j_modelIdx and bead_i_chain == bead_j_chain:
-            #     bonds[(i, j)] = 1
 
-        ## Avoid getting isolated beads in native contacts
-        # import networkx as nx
-
-        # for clsName in self.getClasses().keys():
-
-        #     chName = self.getClasses()[clsName]["leader"]
-        #     nodes = np.where(chain_by_idx == chName)[0]
-         
-        #     G = nx.Graph()
-        #     G.add_nodes_from(nodes)
-         
-        #     ## Only contacts between beads in nodes
-        #     for (node_a, node_b), _ in native_contacts.items():
-        #         if node_a in nodes and node_b in nodes:
-        #             G.add_edge(node_a, node_b)
-
-        #         ## Find groups of connected beads in native contacts
-        #     components = list(nx.connected_components(G))
-        #     components_min_distances = np.eye(len(components), len(components))
-        #     np.fill_diagonal(components_min_distances, np.inf)
-        #     nodes_min_distance_btw_components = {}
-        #     # nodes_min_distance_btw_components = np.eye(len(components), len(components))
-
-        #     if len(components) > 1:
-
-        #         for cc_a, cc_b in itertools.combinations(range(len(components)), 2):
-                    
-        #             min_dist = np.inf
-        #             min_dist_pair = None
-        #             cc_a_nodes = np.array(list(components[cc_a]), dtype=int)
-        #             cc_b_nodes = np.array(list(components[cc_b]), dtype=int)
-        #             tmp_coords_cc_a = coords[cc_a_nodes]
-        #             tmp_coords_cc_b = coords[cc_b_nodes]
-        #             for node_b_idx, node_b_coords in enumerate(tmp_coords_cc_b):
-        #                 dist = np.linalg.norm(tmp_coords_cc_a - node_b_coords, axis=1)
-        #                 tmp_min_dist = np.min(dist)
-        #                 if tmp_min_dist < min_dist:
-        #                     min_dist = tmp_min_dist
-        #                     min_dist_pair = (int(cc_a_nodes[np.argmin(dist)]), int(cc_b_nodes[node_b_idx]))
-        #             components_min_distances[cc_a, cc_b] = min_dist
-        #             components_min_distances[cc_b, cc_a] = min_dist
-        #             nodes_min_distance_btw_components[(cc_b, cc_a)] = min_dist_pair
-        #             nodes_min_distance_btw_components[(cc_a, cc_b)] = min_dist_pair
-                
-        #         ## Creating the native contact
-        #         for idx, dist_array in enumerate(components_min_distances[0:-1]):
-        #             cc_b = np.argmin(dist_array)
-        #             cc_a = idx
-        #             beads_in_min_distance = nodes_min_distance_btw_components[(cc_a, cc_b)]
-        #             i, j = beads_in_min_distance
-        #             bead_name_i = bead_names[i]
-        #             bead_name_j = bead_names[j]
-        #             # import pdb;pdb.set_trace()
-        #             ## Expand to the rest of models
-        #             for model in np.unique(model_by_idx): ##Iterate over models
-        #                 for tmp_chain in self.getClasses()[clsName].get("members"): ## Iterate over chain
-        #                     tmp_bead_idx = np.where((model_by_idx == model) & (chain_by_idx == tmp_chain) & (bead_names == bead_name_i))[0][0]
-        #                     tmp_bead_jdx = np.where((model_by_idx == model) & (chain_by_idx == tmp_chain) & (bead_names == bead_name_j))[0][0]
-        #                     native_contacts[(tmp_bead_idx, tmp_bead_jdx)] = 1
-        #             components_min_distances[cc_a, cc_b] = np.inf
-        #             components_min_distances[cc_b, cc_a] = np.inf
-
-        #         import pdb;pdb.set_trace()
-        ## Remove isolated beads in native contacts
         return bonds, native_contacts
 
     def write_pdb(self, filename: str):
@@ -796,7 +718,8 @@ class AdaptiveCG(CoarseGrainedBase):
         """
         Visualiza los beads y la estructura original en ChimeraX.
         """
-
+        serial_number = random.randint(0, 999999)
+        out_script = out_script.replace(".cxc", f"_{serial_number:06d}.cxc")
         try:
             import os  
             os.system("chimerax --version")
@@ -810,10 +733,11 @@ class AdaptiveCG(CoarseGrainedBase):
         
         beads = np.array([i for i in self.spreadedCgStructure.get_atoms()])
         chain_by_idx = np.array([i.get_parent().get_parent().get_id() for i in beads])
-        model_by_idx = np.array([i.get_parent().get_parent().get_parent().get_id() for i in beads])
+        # model_by_idx = np.array([i.get_parent().get_parent().get_parent().get_id() for i in beads])
         
         ## Save the coarse grained molecule as a PDB file
-        self.write_pdb("/tmp/adaptiveCG.pdb")
+        output_pdb = f"/tmp/adaptiveCG_{serial_number}.pdb"
+        self.write_pdb(output_pdb)
 
         ## Write the ChimeraX script to visualize the original structure and the beads
         with open(out_script, "w") as f:
@@ -825,7 +749,7 @@ class AdaptiveCG(CoarseGrainedBase):
             f.write(f"open {self.inputPDBfilePath}\n\n")
             f.write("hide atoms\n")
             f.write("show cartoon\n")
-            f.write(f"open /tmp/adaptiveCG.pdb\n\n")
+            f.write(f"open {output_pdb}\n\n")
             f.write("style sphere\n")
             f.write("color bychain\n")
 
@@ -839,8 +763,6 @@ class AdaptiveCG(CoarseGrainedBase):
                 if bond_str not in drawn_bonds:
                     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
                     drawn_bonds.append(bond_str)
-                # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
-                # import pdb;pdb.set_trace()
             drawn_native_contacts = []
             for i, j, _, _, _ in self.getForceField()["nativeContacts"]["data"]:
                 nc_str = "_".join(np.sort([i, j]).astype(str))
@@ -850,15 +772,6 @@ class AdaptiveCG(CoarseGrainedBase):
                     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
                     drawn_native_contacts.append(nc_str)
 
-            # for tmp_data in self.getForceField()["bonds"]["data"]:
-            #     i, j = tmp_data[0], tmp_data[1]
-            #     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
-            #     # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color blue radius 0.2\n")
-            #     # import pdb;pdb.set_trace()
-            # for tmp_data in self.getForceField()["nativeContacts"]["data"]:
-            #     i, j = tmp_data[0], tmp_data[1]
-            #     f.write(f"distance #2/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
-                # f.write(f"distance #2.{model_by_idx[i] + 1}/{chain_by_idx[i]}@{bead_name_by_idx[i]} #2.{model_by_idx[j] + 1}/{chain_by_idx[j]}@{bead_name_by_idx[j]} color red radius 0.2\n")
 
             f.write("show #1 cartoon\n\n")       # show original PDB
             f.write("hide #1 atoms\n\n")       # show original PDB
@@ -866,7 +779,7 @@ class AdaptiveCG(CoarseGrainedBase):
             f.write("lighting depthCue false\n")  # hide initial beads
             f.write("zoom\n")
 
-        print(f"CXC script written to {out_script}")
+        # print(f"CXC script written to {out_script}")
         if view:
             import os
             os.system(f"chimerax {out_script} &")
