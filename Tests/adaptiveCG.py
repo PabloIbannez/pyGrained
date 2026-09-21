@@ -1,8 +1,16 @@
+import os
+
+import json
+import jsbeautifier
+
 from pyGrained.models.AdaptiveCG import AdaptiveCG
 from pyGrained.models.SBCG import SBCG
 
-pdb_file1 = "./data/lizard_3tower.pdb"  # Replace with your PDB file path
-pdb_file2 = "./data/_mcps/6qi5_mcp.pdb"  # Replace with your PDB file path
+from pyGrained.utils.output import writeSP
+from pyGrained.utils.output import types2global
+
+pdb_file1 = "./data/lizard_6qi5_clean.pdb"  # Replace with your PDB file path
+pdb_file2 = "./data/HAdV5_6b1t_clean.pdb"  # Replace with your PDB file path
 
 params = {
     "parameters": { 
@@ -32,18 +40,24 @@ params2 = {
     "SASA": False
 }
 
-model = AdaptiveCG("test", pdb_file1, params=params)
-# model.view()
-model.write_pdb("./data/lizard_3tower_CG.pdb")
-# model = SBCG("test", pdb_file1, params=params2)
-# model = AdaptiveCG("test", pdb_file, params=params)
-model.view()
+model = AdaptiveCG("test", pdb_file2, params=params)
+
+writeSP(model.getSpreadedCgStructure(),"./data/hadv5_CG.sp")
+# # model = SBCG("test", pdb_file1, params=params2)
+# # model = AdaptiveCG("test", pdb_file, params=params)
 
 # model = AdaptiveCG(pdb_file, n_beads, sigma)
 # R_opt, chi_opt = model.optimize(max_iter=3000)
 
-# model.export_beads_pdb("cg_beads.pdb")
-# model.write_chimerax_beads_script(pdb_file, R_opt, out_script="show_beads.cxc", view=True)
-
 # pdb_file = "/home/pablo/Lizard_MD/structures/au_mcps/6qi5_mcp.pdb"  # Replace with your PDB file path
 # unique_mols = model.compute_unique_molecules()
+
+with open("HADV5_SOP.json", 'w') as outfile:
+    glb        = types2global(model.getTypes())
+    state      = model.getState()
+    structure  = model.getStructure()
+    forceField = model.getForceField()
+    opts = jsbeautifier.default_options()
+    opts.indent_size = 2
+    top = {"structure":structure,"forceField":forceField}
+    outfile.write(jsbeautifier.beautify(json.dumps({"global":glb,"state":state,"topology":top}), opts))
