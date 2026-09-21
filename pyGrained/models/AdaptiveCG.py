@@ -29,20 +29,21 @@ from ..utils.coarseGrained import *
 
 class AdaptiveCG(CoarseGrainedBase):
 
-    def __beadPairs(self,cgStructure,cutOff,condition):
+    def __beadPairs(self,cgStructure,cutOff,sameChain):
         """Bead pairs closer than cutOff, as {(id_i,id_j):r0}.
 
         The ids are the bead serial numbers of the spreaded CG structure,
         which run from 0 in the order the beads are iterated.
 
-        condition keeps the pairs within the same chain ("intra"), the pairs
-        in different chains ("inter") or every pair ("all"). Two beads are in
-        the same chain when both their model and their chain ids match.
-        """
+        sameChain selects the pairs within a chain when it is True and the
+        pairs across chains when it is False. Two beads are in the same chain
+        when both their model and their chain ids match.
 
-        if condition not in ("intra","inter","all"):
-            self.logger.error(f"Unknown condition {condition}, expected intra, inter or all")
-            raise Exception("Unknown condition for the bead pairs")
+        Distances are measured directly between beads, unlike SBCG, which
+        projects atomistic CA-CA pairs onto the beads through the inverted CG
+        map. A bead here spans a few hundred atoms, so a CA atom is no longer
+        a meaningful proxy for the pair.
+        """
 
         beads  = list(cgStructure.get_atoms())
         ids    = [bead.get_serial_number() for bead in beads]
@@ -55,32 +56,31 @@ class AdaptiveCG(CoarseGrainedBase):
         pairs = {}
         for i,j in kd.query_pairs(cutOff):
 
-            sameChain = mdlCh[i] == mdlCh[j]
-
-            if condition == "intra" and not sameChain:
-                continue
-            if condition == "inter" and sameChain:
+            if (mdlCh[i] == mdlCh[j]) != sameChain:
                 continue
 
             pairs[(ids[i],ids[j])] = float(np.linalg.norm(coords[i]-coords[j]))
 
         return pairs
 
-    def __generateENM(self,cgStructure,enmCut,condition):
-        """Bonds: an elastic network between every pair of beads within enmCut."""
+    def __generateENM(self,cgStructure,enmCut):
+        """Bonds: the intra chain elastic network, every pair of beads of the
+        same chain within enmCut.
+        """
 
-        bonds = self.__beadPairs(cgStructure,enmCut,condition)
+        bonds = self.__beadPairs(cgStructure,enmCut,sameChain=True)
 
-        self.logger.info(f"Generated {len(bonds)} ENM bonds ({condition}) with a cut off of {enmCut}")
+        self.logger.info(f"Generated {len(bonds)} intra chain ENM bonds with a cut off of {enmCut}")
 
         return bonds
 
-    def __generateNativeContacts(self,cgStructure,ncCut,condition):
-        """Native contacts: every pair of beads within ncCut."""
+    def __generateNativeContacts(self,cgStructure,ncCut):
+        """Native contacts: the chain interfaces, every pair of beads of
+        different chains within ncCut."""
 
-        nativeContacts = self.__beadPairs(cgStructure,ncCut,condition)
+        nativeContacts = self.__beadPairs(cgStructure,ncCut,sameChain=False)
 
-        self.logger.info(f"Generated {len(nativeContacts)} native contacts ({condition}) with a cut off of {ncCut}")
+        self.logger.info(f"Generated {len(nativeContacts)} inter chain native contacts with a cut off of {ncCut}")
 
         return nativeContacts
 
@@ -351,9 +351,8 @@ class AdaptiveCG(CoarseGrainedBase):
 
         bondsModelName = bondsModel["name"]
         if bondsModelName == "ENM":
-            enmCut    = bondsModel["parameters"]["enmCut"]
-            condition = bondsModel["parameters"].get("condition","intra")
-            bonds     = self.__generateENM(spreadedCgStructure,enmCut,condition)
+            enmCut = bondsModel["parameters"]["enmCut"]
+            bonds  = self.__generateENM(spreadedCgStructure,enmCut)
         else:
             self.logger.error(f"Bonds model {bondsModelName} is not availble")
             raise Exception(f"Bonds model not available")
@@ -363,11 +362,18 @@ class AdaptiveCG(CoarseGrainedBase):
         nativeContacsModelName = nativeContactsModel["name"]
         if nativeContacsModelName == "cutOff":
             ncCut          = nativeContactsModel["parameters"]["ncCut"]
-            condition      = nativeContactsModel["parameters"].get("condition","inter")
-            nativeContacts = self.__generateNativeContacts(spreadedCgStructure,ncCut,condition)
+            nativeContacts = self.__generateNativeContacts(spreadedCgStructure,ncCut)
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")
+
+        # Bonds are intra chain and native contacts are inter chain, so this
+        # is impossible. It is checked because the force field would be
+        # silently wrong otherwise, not because it is expected to happen.
+        overlap = set(nativeContacts.keys()) & set(bonds.keys())
+        if overlap:
+            self.logger.error(f"{len(overlap)} pairs are both a bond and a native contact")
+            raise Exception("A pair cannot be a bond and a native contact at the same time")
 
         self.logger.info(f"Topology generation end")
 
@@ -396,15 +402,21 @@ class AdaptiveCG(CoarseGrainedBase):
 
         #Native contacts
         if nativeContacsModelName == "cutOff":
+
+            # MorseWCACommon_eps0 is U(r) = E*[(1-exp(-(r-r0)/D))^2 - 1] plus a
+            # WCA repulsion.             
+            E = nativeContactsModel["parameters"]["epsilon"]
+            D = nativeContactsModel["parameters"]["D"]
+
             forceField["nativeContacts"] = {}
             forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
             forceField["nativeContacts"]["parameters"] = {"eps0":nativeContactsModel["parameters"].get("eps0",1.0)}
-            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0"]
+            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E", "D"]
             forceField["nativeContacts"]["data"]       = []
 
             for nc,r0 in nativeContacts.items():
                 id_i,id_j = nc
-                forceField["nativeContacts"]["data"].append([id_i,id_j,round(r0,3)])
+                forceField["nativeContacts"]["data"].append([id_i,id_j,round(r0,3),E,D])
         else:
             self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
             raise Exception(f"Native contacts model not available")

@@ -17,12 +17,12 @@ params = {
         "bondsModel": {"name":"ENM", "parameters":{
             "enmCut": 20.0,      # Cutoff distance for the elastic network
             "K": 1.0,            # Common spring constant
-            "condition": "intra" # Bonds between beads of the same chain
         }},
         "nativeContactsModel":{"name":"cutOff", "parameters":{
             "ncCut": 20.0,       # Cutoff distance for the native contacts
-            "eps0": 1.0,
-            "condition": "inter" # Native contacts between beads of different chains
+            "epsilon": 1.0,      # Depth of the Morse well, per contact
+            "D": 1.0,            # Width of the Morse well
+            "eps0": 1.0,         # WCA epsilon, common to every contact
         }},
         },
     "SASA": False
