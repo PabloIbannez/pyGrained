@@ -127,8 +127,13 @@ class CoarseGrainedBase:
                 name = ascii_uppercase[len(classes.keys())]
                 classes[name] = {"leader":[],"members":set(chContainsCh[ch]+[ch])}
 
+        # members is accumulated as a set, whose iteration order depends on
+        # string hashing and therefore changes between runs. Sorting it makes
+        # the class reproducible, and the leader with it: the leader is the
+        # shortest member, so a class of equally long chains is decided
+        # entirely by the tie break.
         for clName,info in classes.items():
-            info["members"] = list(info["members"])
+            info["members"] = sorted(info["members"])
 
         for clName,info in classes.items():
             leaderLen = chLen[list(info["members"])[0]]
