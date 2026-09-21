@@ -20,6 +20,9 @@ class ChainAdaptiveCG:
                  coords:np.ndarray, 
                  masses:np.ndarray, 
                  R_init:np.ndarray | None=None, sigma:float=2.0):
+        if not np.isfinite(sigma) or sigma <= 0:
+            raise ValueError("sigma must be finite and positive")
+
         self.coords = coords  # (N,3)
         self.sigma = sigma
         self.masses = masses  # (N,)
@@ -64,16 +67,13 @@ class ChainAdaptiveCG:
         diff = self.coords[:, None, :] - self.R[None, :, :]
         dist2 = np.sum(diff**2, axis=2)  # (N,M)
 
-        # Gaussianas (Δ)
-        weights = np.exp(-dist2 / (2 * self.sigma**2))
+        # A per-atom shift cancels during normalization and keeps the
+        # largest Gaussian weight at one, even for narrow Gaussians.
+        shifted_dist2 = dist2 - dist2.min(axis=1, keepdims=True)
+        weights = np.exp(-shifted_dist2 / (2 * self.sigma**2))
         sum_weights = np.sum(weights, axis=1, keepdims=True)
-        sum_weights[sum_weights == 0] = 1e-12  # Avoid division by zero
         chi = weights / sum_weights
 
-        # Normalización → χ
-        # chi = weights / np.sum(weights, axis=1, keepdims=True)
-        # if np.any(np.isnan(chi)):
-        #     import pdb;pdb.set_trace()
         return chi
 
     def update_R(self, chi):
@@ -81,12 +81,18 @@ class ChainAdaptiveCG:
         Refreshes bead positions using:
         R_μ = Σ_i [m_i r_i χ_iμ] / Σ_i [m_i χ_iμ]
         """
-        # weighted = self.coords[:, None, :] * (self.masses[:, None, None] * chi)
-        weighted = self.coords[:, None, :] * (self.masses[:, None, None] * chi[:, :, None])
-        num = np.sum(weighted, axis=0)                  # (M,3)
-        den = np.sum(self.masses[:, None] * chi, axis=0)  # (M,)
+        effective_masses = self.masses[:, None] * chi
+        den = np.sum(effective_masses, axis=0)          # (M,)
+        invalid_beads = np.flatnonzero(~np.isfinite(den) | (den <= 0))
+        if invalid_beads.size:
+            raise ValueError(
+                "Cannot update bead positions: effective mass must be finite "
+                f"and positive for bead indices {invalid_beads.tolist()}"
+            )
 
-        # self.R = num / den[:, None]
+        weighted = self.coords[:, None, :] * effective_masses[:, :, None]
+        num = np.sum(weighted, axis=0)                  # (M,3)
+
         return num / den[:, None]
 
     def optimize(self, max_iter=100, tol=1e-4, debug=False):
