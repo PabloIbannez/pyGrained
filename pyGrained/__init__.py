@@ -223,17 +223,19 @@ class CoarseGrainedBase:
                                                                                          atm.get_parent().get_id()[1] >= minimun and \
                                                                                          atm.get_parent().get_id()[1] <= maximun )])
 
-                        #Aling mobile with reference
+                        # Align the reference chain with the mobile chain.
+                        referenceCenter = np.mean(referencePos,axis=0)
+                        mobileCenter    = np.mean(mobilePos,axis=0)
 
-                        #Translation
-                        trans = np.mean(mobilePos,axis=0) - np.mean(referencePos,axis=0)
+                        referencePos = referencePos - referenceCenter
+                        mobilePos    = mobilePos - mobileCenter
 
-                        #Move mobile and reference to origin
-                        referencePos = referencePos - np.mean(referencePos,axis=0)
-                        mobilePos    = mobilePos - np.mean(mobilePos,axis=0)
-
-                        #Rotation over mobile to get reference
                         rot = Rotation.align_vectors(mobilePos,referencePos)[0]
+
+                        # Store the complete affine translation so the
+                        # transformation can be applied to any representation
+                        # of the reference chain, regardless of its centroid.
+                        trans = mobileCenter - rot.apply(referenceCenter)
 
                         transformations[clsName].append([m.get_id(),ch.get_id(),trans,rot])
 
@@ -314,12 +316,7 @@ class CoarseGrainedBase:
                             atomCount+=1
 
                     referencePositions = np.asarray([ atm.get_coord() for atm in referenceCh.get_atoms()])
-                    ref2orig = np.mean(referencePositions,axis=0)
-                    referencePositions = referencePositions - ref2orig
-
-                    mobilePositions = r.apply(referencePositions)
-                    mobilePositions = mobilePositions + ref2orig
-                    mobilePositions = mobilePositions + t
+                    mobilePositions = r.apply(referencePositions) + t
 
                     for i,atm_mobile in enumerate(ch.get_atoms()):
                         atm_mobile.set_coord(mobilePositions[i])
