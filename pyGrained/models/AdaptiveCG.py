@@ -15,6 +15,7 @@ from .. import CoarseGrainedBase
 
 import os
 import warnings
+import itertools
 
 import numpy as np
 
@@ -27,6 +28,61 @@ from ..utils.atomList import *
 from ..utils.coarseGrained import *
 
 class AdaptiveCG(CoarseGrainedBase):
+
+    def __beadPairs(self,cgStructure,cutOff,condition):
+        """Bead pairs closer than cutOff, as {(id_i,id_j):r0}.
+
+        The ids are the bead serial numbers of the spreaded CG structure,
+        which run from 0 in the order the beads are iterated.
+
+        condition keeps the pairs within the same chain ("intra"), the pairs
+        in different chains ("inter") or every pair ("all"). Two beads are in
+        the same chain when both their model and their chain ids match.
+        """
+
+        if condition not in ("intra","inter","all"):
+            self.logger.error(f"Unknown condition {condition}, expected intra, inter or all")
+            raise Exception("Unknown condition for the bead pairs")
+
+        beads  = list(cgStructure.get_atoms())
+        ids    = [bead.get_serial_number() for bead in beads]
+        mdlCh  = [(bead.get_parent().get_parent().get_parent().get_id(),
+                   bead.get_parent().get_parent().get_id()) for bead in beads]
+        coords = np.asarray([bead.get_coord() for bead in beads])
+
+        kd = cKDTree(coords)
+
+        pairs = {}
+        for i,j in kd.query_pairs(cutOff):
+
+            sameChain = mdlCh[i] == mdlCh[j]
+
+            if condition == "intra" and not sameChain:
+                continue
+            if condition == "inter" and sameChain:
+                continue
+
+            pairs[(ids[i],ids[j])] = float(np.linalg.norm(coords[i]-coords[j]))
+
+        return pairs
+
+    def __generateENM(self,cgStructure,enmCut,condition):
+        """Bonds: an elastic network between every pair of beads within enmCut."""
+
+        bonds = self.__beadPairs(cgStructure,enmCut,condition)
+
+        self.logger.info(f"Generated {len(bonds)} ENM bonds ({condition}) with a cut off of {enmCut}")
+
+        return bonds
+
+    def __generateNativeContacts(self,cgStructure,ncCut,condition):
+        """Native contacts: every pair of beads within ncCut."""
+
+        nativeContacts = self.__beadPairs(cgStructure,ncCut,condition)
+
+        self.logger.info(f"Generated {len(nativeContacts)} native contacts ({condition}) with a cut off of {ncCut}")
+
+        return nativeContacts
 
     def _mapping(self, positions, masses, resolution, minBeads, seed):
         """Bead positions for one chain: mass-weighted k-means.
@@ -272,24 +328,132 @@ class AdaptiveCG(CoarseGrainedBase):
 
         #############################################################
 
-        # TODO: topology and force field are not implemented yet, only the
-        # mapping is.
-        #
-        # SBCG builds them from the all-atom spreaded structure, projecting
-        # CA-CA pairs within a cutoff onto beads through the inverted CG map
-        # and counting how many atomistic pairs fall on each bead pair. Before
-        # porting that here we have to decide whether to keep the CA
-        # projection (a bead spans a few hundred atoms, so CA atoms are a poor
-        # proxy) or measure bead-bead distances directly, and which
-        # intra/inter convention to use for bonds vs native contacts.
-        #
-        # Going beyond the topology and into the dynamics of Monago et al.
-        # needs the mapping delta_mu_i (allIndex2cgIndex above) to project the
-        # atomistic forces and velocities, which is what feeds the elastic
-        # couplings kappa_munu and the bead-bead internal friction Gamma_munu
-        # (Eqs. 24-25).
-        self.logger.warning("Force field not implemented yet for AdaptiveCG, only the mapping")
+        self.logger.info(f"Generating topology ...")
+
+        try:
+            bondsModel = globalParams["bondsModel"]
+        except:
+            self.logger.error(f"bondsModel not defined in params")
+            raise Exception("bondsModel not defined in parameters")
+
+        try:
+            nativeContactsModel = globalParams["nativeContactsModel"]
+        except:
+            self.logger.error("nativeContactsModel not defined in parameters")
+            raise Exception("nativeContactsModel not defined in parameters")
+
+        self.logger.debug(f"Selected bonds model: {bondsModel}")
+        self.logger.debug(f"Selected native contacts model: {nativeContactsModel}")
+
+        #############################################################
+
+        self.logger.info(f"Generating bonds ...")
+
+        bondsModelName = bondsModel["name"]
+        if bondsModelName == "ENM":
+            enmCut    = bondsModel["parameters"]["enmCut"]
+            condition = bondsModel["parameters"].get("condition","intra")
+            bonds     = self.__generateENM(spreadedCgStructure,enmCut,condition)
+        else:
+            self.logger.error(f"Bonds model {bondsModelName} is not availble")
+            raise Exception(f"Bonds model not available")
+
+        self.logger.info(f"Generating native contacts ...")
+
+        nativeContacsModelName = nativeContactsModel["name"]
+        if nativeContacsModelName == "cutOff":
+            ncCut          = nativeContactsModel["parameters"]["ncCut"]
+            condition      = nativeContactsModel["parameters"].get("condition","inter")
+            nativeContacts = self.__generateNativeContacts(spreadedCgStructure,ncCut,condition)
+        else:
+            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
+            raise Exception(f"Native contacts model not available")
+
+        self.logger.info(f"Topology generation end")
+
+        #############################################################
+
+        #ForceField
+
+        self.logger.info(f"Generating force field ...")
+
         forceField = {}
+
+        #Bonds
+        if bondsModelName == "ENM":
+            forceField["bonds"] = {}
+            forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
+            forceField["bonds"]["parameters"] = {"K":bondsModel["parameters"]["K"]}
+            forceField["bonds"]["labels"]     = ["id_i", "id_j", "r0"]
+            forceField["bonds"]["data"]       = []
+
+            for bnd,r0 in bonds.items():
+                id_i,id_j = bnd
+                forceField["bonds"]["data"].append([id_i,id_j,round(r0,3)])
+        else:
+            self.logger.error(f"Bonds model {bondsModelName} is not availble")
+            raise Exception(f"Bonds model not available")
+
+        #Native contacts
+        if nativeContacsModelName == "cutOff":
+            forceField["nativeContacts"] = {}
+            forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
+            forceField["nativeContacts"]["parameters"] = {"eps0":nativeContactsModel["parameters"].get("eps0",1.0)}
+            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0"]
+            forceField["nativeContacts"]["data"]       = []
+
+            for nc,r0 in nativeContacts.items():
+                id_i,id_j = nc
+                forceField["nativeContacts"]["data"].append([id_i,id_j,round(r0,3)])
+        else:
+            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
+            raise Exception(f"Native contacts model not available")
+
+        #Verlet list
+
+        forceField["nl"] = {}
+        forceField["nl"]["type"]       = ["VerletConditionalListSet","nonExclIntra_nonExclInter"]
+        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.5}
+        forceField["nl"]["labels"]     = ["id", "id_list"]
+        forceField["nl"]["data"]       = []
+
+        exclusions = {}
+
+        for bead in spreadedCgStructure.get_atoms():
+            exclusions[bead.get_serial_number()]=set()
+
+        for bnd in bonds.keys():
+            id_i,id_j = bnd
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
+
+        for nc in nativeContacts.keys():
+            id_i,id_j = nc
+            exclusions[id_i].add(id_j)
+            exclusions[id_j].add(id_i)
+
+        for bead in spreadedCgStructure.get_atoms():
+            id_ = bead.get_serial_number()
+            forceField["nl"]["data"].append([id_,list(exclusions[id_])])
+
+        #Steric
+
+        forceField["steric"] = {}
+        forceField["steric"]["type"]       = ["NonBonded", "WCAType2"]
+        forceField["steric"]["parameters"] = {"cutOffFactor": 2.5,"condition":"intra"}
+        forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
+        forceField["steric"]["data"]       = []
+
+        for t1,t2 in itertools.product(types.keys(),repeat=2):
+            tName1 = types[t1]["name"]
+            tName2 = types[t2]["name"]
+
+            tRadius1 = types[t1]["radius"]
+            tRadius2 = types[t2]["radius"]
+
+            forceField["steric"]["data"].append([tName1,tName2,1.0,round(tRadius1+tRadius2,3)])
+
+        self.logger.info(f"Force field generation end")
 
         #############################################################
 

@@ -4,7 +4,6 @@ import json
 import jsbeautifier
 
 from pyGrained.models.AdaptiveCG import AdaptiveCG
-from pyGrained.models.SBCG import SBCG
 
 from pyGrained.utils.output import writeSP
 from pyGrained.utils.output import types2global
@@ -13,17 +12,18 @@ pdb_file1 = "./data/lizard_6qi5_clean.pdb"  # Replace with your PDB file path
 pdb_file2 = "./data/HAdV5_6b1t_clean.pdb"  # Replace with your PDB file path
 
 params = {
-    "parameters": { 
-        "resolution": 250, # Desired number of beads
-        # "nBeads": 20, # Desired number of beads
-        "sigma": .20,  # Width parameter for Gaussian,
-        "steps": 1000, # Number of optimization steps
-        "bondsModel": {"name":"AdaptiveCG", "parameters":{
-            "adaptiveCGCut": 20.0, # Cutoff distance for adaptive CG bonds
+    "parameters": {
+        "resolution": 250, # Atoms per bead
+        "bondsModel": {"name":"ENM", "parameters":{
+            "enmCut": 20.0,      # Cutoff distance for the elastic network
+            "K": 1.0,            # Common spring constant
+            "condition": "intra" # Bonds between beads of the same chain
         }},
-        "nativeContactsModel":{"name":"AdaptiveCG", "parameters":{
-                "adaptiveCGCut": 20.0, # Cutoff distance for adaptive CG native contacts
-                   }},
+        "nativeContactsModel":{"name":"cutOff", "parameters":{
+            "ncCut": 20.0,       # Cutoff distance for the native contacts
+            "eps0": 1.0,
+            "condition": "inter" # Native contacts between beads of different chains
+        }},
         },
     "SASA": False
 }
