@@ -1,237 +1,126 @@
+"""Adaptive coarse-grained (AdaptiveCG) model.
+
+The bead mapping implemented in this module follows Sec. II A ("The CG
+mapping") of
+
+    C. Monago, J. A. de la Torre, R. Delgado-Buscalioni and P. Espanol,
+    "Unraveling internal friction in a coarse-grained protein model",
+    J. Chem. Phys. 162, 114115 (2025).
+    https://doi.org/10.1063/5.0255498
+
+All equation numbers quoted in this module refer to that paper.
+"""
+
 from .. import CoarseGrainedBase
 
-import numpy as np
-# from Bio.PDB import * ## This also imports SASA
-from Bio.PDB import PDBParser, Structure, Model, Chain, Residue, Atom
-from sklearn.cluster import KMeans
-from copy import deepcopy
 import os
 import warnings
-import itertools
 
+import numpy as np
+
+from sklearn.cluster import KMeans
 from scipy.spatial import cKDTree
+
+from Bio.PDB import Structure, Model, Chain, Residue, Atom
+
 from ..utils.atomList import *
 from ..utils.coarseGrained import *
 
-import logging
-
-class ChainAdaptiveCG:
-    def __init__(self, n_beads:int, 
-                 coords:np.ndarray, 
-                 masses:np.ndarray, 
-                 R_init:np.ndarray | None=None, sigma:float=2.0):
-        if not np.isfinite(sigma) or sigma <= 0:
-            raise ValueError("sigma must be finite and positive")
-
-        self.coords = coords  # (N,3)
-        self.sigma = sigma
-        self.masses = masses  # (N,)
-
-        self.logger = logging.getLogger(f"pyGrained")
-
-        if R_init is not None:
-            self.R_init = R_init.copy()
-            self.n_beads = R_init.shape[0]
-            logging.info(f"Using provided initial bead positions for chain with {self.n_beads} beads.")
-        else:
-            self.n_beads = n_beads
-            self.R_init = self._initialize_beads()
-            ## This for checking what happens if initial beads are all placed in the same coordinates
-            ## For the moment it fails, the whole thing collapses
-            # self.R_init = np.tile(np.mean(self.coords, axis=0), self.n_beads).reshape(-1,3)
-            # import pdb;pdb.set_trace()
-        
-        self.R = self.R_init.copy()
-        self.R_opt = None
-        self.chi = None
-        self.chi_opt = None
-        # self.R_opt, self.chi_opt = self.optimize()
-
-    def _initialize_beads(self):
-        ## TODO: Test if  initializing beads in the same position lead to proper CG
-        """
-        Initializes bead positions using KMeans.
-        """
-        kmeans = KMeans(n_clusters=self.n_beads, n_init=10)
-        kmeans.fit(self.coords)
-
-        # R tendrá forma (M,3): posiciones iniciales de los beads
-        return kmeans.cluster_centers_.astype(float)
-    
-    def compute_chi(self):
-        """
-        Calculates χ(r_i) para each atom and bead.
-        χ_iμ = Δ(r_i - R_μ) / Σ_ν Δ(r_i - R_ν)
-        where Δ is a Gaussiana with deviationsigma.
-        """
-        diff = self.coords[:, None, :] - self.R[None, :, :]
-        dist2 = np.sum(diff**2, axis=2)  # (N,M)
-
-        # A per-atom shift cancels during normalization and keeps the
-        # largest Gaussian weight at one, even for narrow Gaussians.
-        shifted_dist2 = dist2 - dist2.min(axis=1, keepdims=True)
-        weights = np.exp(-shifted_dist2 / (2 * self.sigma**2))
-        sum_weights = np.sum(weights, axis=1, keepdims=True)
-        chi = weights / sum_weights
-
-        return chi
-
-    def update_R(self, chi):
-        """
-        Refreshes bead positions using:
-        R_μ = Σ_i [m_i r_i χ_iμ] / Σ_i [m_i χ_iμ]
-        """
-        effective_masses = self.masses[:, None] * chi
-        den = np.sum(effective_masses, axis=0)          # (M,)
-        invalid_beads = np.flatnonzero(~np.isfinite(den) | (den <= 0))
-        if invalid_beads.size:
-            raise ValueError(
-                "Cannot update bead positions: effective mass must be finite "
-                f"and positive for bead indices {invalid_beads.tolist()}"
-            )
-
-        weighted = self.coords[:, None, :] * effective_masses[:, :, None]
-        num = np.sum(weighted, axis=0)                  # (M,3)
-
-        return num / den[:, None]
-
-    def optimize(self, max_iter=100, tol=1e-4, debug=False):
-        """
-        Iterate until convergences.
-        Convergens when any bead moves more than the tolerance (tol).
-        """
-        # R_old = self.R_init.copy()
-        for it in range(max_iter):
-            R_old = self.R.copy()
-
-            chi = self.compute_chi()
-            self.R = self.update_R(chi)
-
-            # Cálculo del desplazamiento máximo
-            shift = np.max(np.linalg.norm(self.R - R_old, axis=1))
-
-            if shift < tol:
-                self.logger.info(f"Converged in {it} iterations")
-                break
-        if debug:
-            import pdb;pdb.set_trace()
-        
-        self.R_opt = self.R.copy() 
-        self.chi_opt = self.compute_chi()
-        # print(np.abs(self.R_init - self.R_opt))
-        self.logger.info(f"Finished optimization after {it+1} iterations")
-        return self.R, chi
-
 class AdaptiveCG(CoarseGrainedBase):
-    def __init__(self, name:str, 
-                 inputPDBfilePath:str, 
-                 params:dict, 
+
+    def _mapping(self, positions, masses, resolution, minBeads, seed):
+        """Bead positions for one chain: mass-weighted k-means.
+
+        The paper places the beads by minimizing the Kullback-Leibler
+        divergence between the atomistic and the coarse-grained mass
+        densities (Eqs. 2-7), which yields the fixed-point condition
+
+            R_mu = sum_i m_i r_i chi_imu / sum_i m_i chi_imu          (Eq. 8)
+
+        with chi the Shepard functions (Eq. 9)
+
+            chi_imu = Delta(r_i - R_mu) / sum_nu Delta(r_i - R_nu)
+
+        and Delta a Gaussian of width sigma (Eq. 3), solved by the iteration
+        of Eq. 11.
+
+        This is equivalent to a mass-weighted k-means in the limit sigma -> 0.
+        There the Shepard functions become the characteristic functions of the
+        Voronoi cells around R_mu, so the assignment step reduces to picking
+        the nearest bead and Eq. 11 becomes Lloyd's algorithm on the objective
+
+            J = sum_i m_i |r_i - R_mu(i)|^2 = sum_mu M_mu Rg_mu^2
+
+        i.e. it makes the beads as compact as possible in a mass-weighted
+        sense. That limit is the regime the paper works in: it picks
+        sigma = 0.053, about 0.01 times the bead spacing, precisely so that
+        the mapping delta_mu_i of Eq. 1 is 0 or 1 and the atoms of a bead are
+        always the same. So k-means is used here directly.
+
+        At finite sigma the same procedure gives fractional assignments (soft
+        k-means, the EM algorithm for an isotropic Gaussian mixture of fixed
+        width sigma). That is a generalization of the paper and is not
+        implemented for now.
+        """
+
+        Nall   = positions.shape[0]
+        Nbeads = int(Nall/resolution)+1
+
+        self.logger.info(f"Generating AdaptiveCG mapping, from {Nall} atoms to {Nbeads} beads")
+
+        if Nbeads <= minBeads:
+            return []
+
+        # tol=0 makes KMeans stop only once the assignment stops changing, so
+        # that each center really is the mass-weighted centroid of its own
+        # Voronoi cell, which is Eq. 8 in this limit. The default tolerance is
+        # relative to the variance of the data and leaves the centers off that
+        # fixed point (by ~0.1 A on a protein-sized chain).
+        #
+        # random_state is fixed so that the mapping is reproducible: Lloyd's
+        # algorithm only reaches a local minimum of J, so different seeds give
+        # slightly different bead positions.
+        kmeans = KMeans(n_clusters=Nbeads, n_init=10, tol=0.0, random_state=seed)
+        kmeans.fit(positions, sample_weight=masses)
+
+        return kmeans.cluster_centers_.astype(float)
+
+    def __init__(self,
+                 name:str,
+                 inputPDBfilePath:str,
+                 params:dict,
                  debug = False):
-       
+
         self.inputPDBfilePath = os.path.abspath(inputPDBfilePath)
-       
-        globalParams = params["parameters"]
-       
-        self.SASA           = params.get("SASA", False)
-        self.resolution     = globalParams["resolution"]
-        self.sigma          = globalParams.get("sigma", 2)
-        self.iterations      = globalParams.get("steps", 1000)
 
-        self.R_0            = params.get("R_0", 20.0)
-        self.minBeads       = params.get("minBeads",1)
+        SASA = params.get("SASA",False)
 
-
-        super().__init__(tpy  = "AdaptiveGC",
+        super().__init__(tpy  = "AdaptiveCG",
                          name = name,
                          inputPDBfilePath = inputPDBfilePath,
-                         removeHetatm = True, removeHydrogens = False,removeNucleics = True,
+                         removeHetatm = True, removeHydrogens = False, removeNucleics = True,
                          centerInput = params.get("centerInput",True),
-                         SASA = self.SASA,
+                         SASA = SASA,
                          aggregateChains = params.get("aggregateChains",True),
                          debug = debug)
-        
-        self.logger.info(f"Generating coarse grained model (AdaptiveGC) ...")
-        
-        # Parsing the microstate BioPython
-        ## Maybe here I should be using the spreadedStructure?
-        parser = PDBParser(QUIET=True)
-        structure = parser.get_structure("mol", inputPDBfilePath)
 
-        atom_coords = []
-        masses = []
-        micro_chains = []
+        #We have to set types,states,structure and forceField
 
-        # Extract coordinates and masses 
-        for atom in structure.get_atoms():
-            atom_coords.append(atom.get_coord())
-            masses.append(atom.mass)
-            full_id = atom.get_full_id()
-            micro_chains.append(full_id[2])
+        #####################################################
+        ################### GENERATE MODEL ##################
 
-        self.micro_coords = np.array(atom_coords)     # (N,3)
-        self.micro_masses = np.array(masses)     # (N,)
-        self.micro_chains = np.array(micro_chains)     # (N,)
-        # cg_chain = []
-        # cg_coords = []
-        # cb_beads_ids = []
+        self.logger.info(f"Generating coarse grained model (AdaptiveCG) ...")
 
+        globalParams = params["parameters"]
 
-        ## Iterate over each class to make initial CG
-        # self.classes_beads = {}
-        # self.chain_beads = {}
-        # for tmp_class, chain_info in self._classes.items(): ## First calculate for the leader chain
-        #     leader_chain = chain_info['leader']
-        #     self.logger.info(f"Working in class {tmp_class} which leader is {leader_chain}.")
-        #     tmp_coords = self.micro_coords[self.micro_chains == leader_chain]
-        #     ref2orig = np.mean(tmp_coords, axis=0)
-        #     n_beads = int(tmp_coords.shape[0] / self.resolution)
-        #     self.logger.info(f" Chain {leader_chain} has {tmp_coords.shape[0]} atoms and will be represented with {n_beads} beads.")
+        resolution = globalParams["resolution"]
+        minBeads   = globalParams.get("minBeads",1)
+        seed       = globalParams.get("seed",0)
 
-        #     tmp_masses = self.micro_masses[self.micro_chains == leader_chain]
-        #     tmp_chain_CG = ChainAdaptiveCG(n_beads, tmp_coords, tmp_masses, sigma=self.sigma)
-        #     tmp_chain_CG.optimize(max_iter=1000)
-        #     self.classes_beads[tmp_class] = deepcopy(tmp_chain_CG)
-        #     self.chain_beads[leader_chain] = deepcopy(tmp_chain_CG)
-        #     cg_chain.extend(leader_chain*n_beads)
-        #     cb_beads_ids.extend(list(range(n_beads)))
-        #     cg_coords.extend(tmp_chain_CG.R_opt)
-        #     ## Now propagate to the other chains in the class
-        #     # other_chains = set(chain_info["members"]) - set("P")
-        #     for _, ch, trans_matrix, rot_matrix in chain_info['transformations']:
-        #         if ch == leader_chain:
-        #             continue
-        #         self.logger.info(f" Propagating to chain {ch}.")
-        #         tmp_coords_other_chain = self.micro_coords[self.micro_chains == ch]
-        #         tmp_masses_other_chain = self.micro_masses[self.micro_chains == ch]
-        #         beads_coords = self.classes_beads[tmp_class].R_opt.copy()
-        #         R_init = (beads_coords - ref2orig) @ rot_matrix.as_matrix().T + ref2orig + trans_matrix 
+        self.SASA = SASA
 
-        #         cg_other_chain = ChainAdaptiveCG(n_beads, tmp_coords_other_chain, tmp_masses_other_chain, sigma=self.sigma, R_init=R_init.copy())
-        #         cg_other_chain.optimize(max_iter=500) 
-
-        #         self.chain_beads[ch] = deepcopy(cg_other_chain)
-                
-        #         cg_chain.extend(ch*n_beads)
-        #         cb_beads_ids.extend(list(range(n_beads)))
-        #         cg_coords.extend(cg_other_chain.R_opt)
-
-        # self.cg_chains = np.array(cg_chain)
-        # self.cg_beads_ids = np.array(cb_beads_ids)
-        # self.cg_coords = np.array(cg_coords, dtype=np.float32)
-
-        # self.logger.info(f"Model generation end")
-
-        # self.logger.info(f"Calculating CG distances...")
-
-        # bead_distances = self.calculateBeadDistances(self.cg_coords, self.R_0)
-        # self.bead_distances = bead_distances[0]
-        # self.bead_distances_indexes = bead_distances[1]
-        # self.intra_chain_distances = bead_distances[2]
-        # self.inter_chain_distances = bead_distances[3]
-
-        ## Creating a Structure class with the CG beads
-        ## Using code for the SBCG class
         aggregatedCgMap = {}
+        spreadedCgMap   = {}
 
         aggregatedCgStructure = Structure.Structure(self.getInputStructure().get_id()+"_AdaptiveCG")
 
@@ -251,17 +140,12 @@ class AdaptiveCG(CoarseGrainedBase):
 
                         positions = np.asarray([atm.get_coord() for atm in chAtoms])
                         masses    = np.asarray([atm.mass for atm in chAtoms])
-                        n_beads = int(positions.shape[0] / self.resolution)
 
                     else:
                         continue
 
                     self.logger.info(f"Working in class {clsName} which leader is {chName}.")
-                    ## Get the position with AdaptiveCG
-                    tmp_chain_CG = ChainAdaptiveCG(n_beads, positions, masses, sigma=self.sigma)
-                    tmp_chain_CG.optimize(max_iter=self.iterations)
-                    
-                    positions_cg = tmp_chain_CG.R_opt
+                    positions_cg = self._mapping(positions,masses,resolution,minBeads,seed)
                     Ncg = len(positions_cg)
 
                     ##########################
@@ -272,36 +156,40 @@ class AdaptiveCG(CoarseGrainedBase):
                         ch_cg = Chain.Chain(ch.get_id())
                         mdl_cg.add(ch_cg)
 
+                        # Hard nearest-bead assignment: delta_mu_i of Eq. 1,
+                        # i.e. the paper's mapping in the sigma -> 0 limit.
                         kd = cKDTree(positions_cg)
                         allIndex2cgIndex = kd.query(positions)[1]
 
-                        cgIndex2allAtoms = []
+                        cgIndex2allAtoms = [[] for _ in range(Ncg)]
                         for allIndex,cgIndex in enumerate(allIndex2cgIndex):
-                            while len(cgIndex2allAtoms) < cgIndex+1:
-                                cgIndex2allAtoms.append([])
                             cgIndex2allAtoms[cgIndex].append(chAtoms[allIndex])
 
                         for cgIndex in range(Ncg):
 
                             atmList = cgIndex2allAtoms[cgIndex]
 
+                            if not atmList:
+                                self.logger.warning(f"Bead {cgIndex} of class {clsName} got no atoms assigned. Ignoring it.")
+                                continue
+
                             ##########################
 
                             chName = self.getClasses()[clsName]["leader"]
 
                             cgName   = chName+str(cgIndex)
+                            # At a Lloyd fixed point the mass-weighted centroid
+                            # of the Voronoi cell is the k-means center, so this
+                            # is positions_cg[cgIndex] up to the solver tolerance.
                             cgPos    = computeAtomListCOM(atmList)
                             cgMass   = computeAtomListMass(atmList)
-                            ## Take care with the mass 
-                            ## I have soft assignments of the atoms to the beads
-                            ## So the mass should be weighted by chi
                             cgRadius = computeAtomListRadiusOfGyration(atmList)
                             if(self.getChargeInInput()):
                                 cgCharge = computeAtomListCharge(atmList)
                             else:
                                 cgCharge = computeAtomListChargeFromResidues(atmList)
 
-                            if self.SASA:
+                            if SASA:
                                 sasaPolar,sasaApolar = computeAtomListSASA(atmList)
 
                             ##########################
@@ -323,7 +211,7 @@ class AdaptiveCG(CoarseGrainedBase):
                                 atm_cg.radius = cgRadius
                                 atm_cg.set_charge(cgCharge)
 
-                                if self.SASA:
+                                if SASA:
                                     atm_cg.totalSASA = sasaPolar+sasaApolar
                                     atm_cg.totalSASApolar  = sasaPolar
                                     atm_cg.totalSASAapolar = sasaApolar
@@ -346,16 +234,18 @@ class AdaptiveCG(CoarseGrainedBase):
                                 currentAtom = (mdl_id,ch_id,res_id,atm_id)
                                 aggregatedCgMap[currentBead].append(currentAtom)
                     else:
-                        self.logger.info(f"Class {clsName} which leader is {chName} has less beads than minBeads({self.minBeads}). Ignoring this chain.")
+                        self.logger.info(f"Class {clsName} which leader is {chName} has less beads than minBeads({minBeads}). Ignoring this chain.")
 
-        self.spreadedCgStructure = super()._CoarseGrainedBase__spreadStructure(aggregatedCgStructure,self.getClasses())
+        spreadedCgStructure = super()._CoarseGrainedBase__spreadStructure(aggregatedCgStructure,self.getClasses())
+
         spreadedCgMap = generateSpreadedCgMap(self.getSpreadedStructure(),
                                               self.getClasses(),
                                               aggregatedCgStructure,
-                                              self.spreadedCgStructure,
+                                              spreadedCgStructure,
                                               aggregatedCgMap)
 
         self.logger.info(f"Model generation end")
+
         #############################################################
 
         #We have defined the following attributes:
@@ -376,156 +266,35 @@ class AdaptiveCG(CoarseGrainedBase):
 
         #############################################################
 
-        types     = generateTypes(self.spreadedCgStructure,self.SASA)
-        state     = generateState(self.spreadedCgStructure)
-        structure = generateStructure(self.spreadedCgStructure)
+        types     = generateTypes(spreadedCgStructure,SASA)
+        state     = generateState(spreadedCgStructure)
+        structure = generateStructure(spreadedCgStructure)
 
         #############################################################
 
-        self.logger.info(f"Generating topology ...")
-
-        try:
-            bondsModel = globalParams["bondsModel"]
-        except:
-            self.logger.error(f"bondsModel not defined in params")
-            raise Exception("bondsModel not defined in parameters")
-
-        try:
-            nativeContactsModel = globalParams["nativeContactsModel"]
-        except:
-            self.logger.error("nativeContactsModel not defined in parameters")
-            raise Exception("nativeContactsModel not defined in parameters")
-
-        self.logger.debug(f"Selected bonds model: {bondsModel}")
-        self.logger.debug(f"Selected native contacts model: {nativeContactsModel}")
-
-        #############################################################
-
-        self.logger.info(f"Generating bonds ...")
-
-        bondsModelName = bondsModel["name"]
-        ## TODO: add my own bonds model, with a cut off 
-        if bondsModelName == "AdaptiveCG":
-            self.logger.info(f"Generating AdaptiveCG bonds ...")
-            adaptiveCGCut = bondsModel["parameters"]["adaptiveCGCut"]
-            bonds, nativeContacts = self.__generateAdaptiveCGBonds(self.spreadedCgStructure,adaptiveCGCut)
-        else:
-            self.logger.error(f"Bonds model {bondsModelName} is not availble")
-            raise Exception(f"Bonds model not available")
-
-        self.logger.info(f"Generating native contacts ...")
-
-        nativeContacsModelName = nativeContactsModel["name"]
-       
-
-        self.logger.info(f"Topology generation end")
-        #########################################
-
-        #ForceField
-
-        self.logger.info(f"Generating force field ...")
-
+        # TODO: topology and force field are not implemented yet, only the
+        # mapping is.
+        #
+        # SBCG builds them from the all-atom spreaded structure, projecting
+        # CA-CA pairs within a cutoff onto beads through the inverted CG map
+        # and counting how many atomistic pairs fall on each bead pair. Before
+        # porting that here we have to decide whether to keep the CA
+        # projection (a bead spans a few hundred atoms, so CA atoms are a poor
+        # proxy) or measure bead-bead distances directly, and which
+        # intra/inter convention to use for bonds vs native contacts.
+        #
+        # Going beyond the topology and into the dynamics of Monago et al.
+        # needs the mapping delta_mu_i (allIndex2cgIndex above) to project the
+        # atomistic forces and velocities, which is what feeds the elastic
+        # couplings kappa_munu and the bead-bead internal friction Gamma_munu
+        # (Eqs. 24-25).
+        self.logger.warning("Force field not implemented yet for AdaptiveCG, only the mapping")
         forceField = {}
 
-        #Auxiliar list with all beads in the system
-        beads = [b for b in self.spreadedCgStructure.get_atoms()]
-
-        #Bonds and native contacts
-        if bondsModelName == "AdaptiveCG": ##TODO: this will be the only one left
-            forceField["bonds"] = {}
-            forceField["bonds"]["type"]       = ["Bond2","HarmonicCommon_K"]
-            forceField["bonds"]["parameters"] = {}
-            # forceField["bonds"]["parameters"]["K"] = bondsModel["parameters"]["K"]
-            forceField["bonds"]["labels"] = ["id_i", "id_j", "r0"]
-            forceField["bonds"]["data"]   = []
-
-            for bnd in bonds:
-                id_i,id_j = bnd
-                pos_i = beads[id_i].get_coord()
-                pos_j = beads[id_j].get_coord()
-                r0 = np.linalg.norm(pos_i-pos_j)
-                forceField["bonds"]["data"].append([id_i,id_j,r0])
-        else:
-            self.logger.error(f"Bonds model {bondsModelName} is not availble")
-            raise Exception(f"Bonds model not available")
-
-        #Native contacts
-        if nativeContacsModelName == "AdaptiveCG":
-            forceField["nativeContacts"] = {}
-            forceField["nativeContacts"]["type"]       = ["Bond2","MorseWCACommon_eps0"]
-            forceField["nativeContacts"]["parameters"] = {"eps0":1.0}
-            ## NOTE: removing parameters that I do not use
-            forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0"]
-            # forceField["nativeContacts"]["labels"]     = ["id_i", "id_j", "r0", "E","D"]
-            forceField["nativeContacts"]["data"]       = []
-
-            for nc in nativeContacts:
-                id_i,id_j = nc
-                pos_i = beads[id_i].get_coord()
-                pos_j = beads[id_j].get_coord()
-                dst = round(np.linalg.norm(pos_i-pos_j),3)
-                ## NOTE: removing parameters that I do not use
-                ## NOTE: Maybe we have to put them
-                # E   = nativeContactsModel["parameters"]["epsilon"]*nativeContacts[nc]
-                # D   = nativeContactsModel["parameters"]["D"]
-                forceField["nativeContacts"]["data"].append([id_i,id_j,dst])
-                # forceField["nativeContacts"]["data"].append([id_i,id_j,dst,E,D])
-        else:
-            self.logger.error(f"Native contacts model {nativeContacsModelName} is not availble")
-            raise Exception(f"Native contacts model not available")
-
-        #Verlet list
-
-        forceField["nl"] = {}
-        forceField["nl"]["type"]       = ["VerletConditionalListSet","nonExclIntra_nonExclInter"]
-        forceField["nl"]["parameters"] = {"cutOffVerletFactor":1.5}
-        forceField["nl"]["labels"]     = ["id", "id_list"]
-        forceField["nl"]["data"]       = []
-
-        exclusions = {}
-
-        for bead in self.spreadedCgStructure.get_atoms():
-            exclusions[bead.get_serial_number()]=set()
-
-        for bnd in bonds:
-            id_i,id_j = bnd
-            exclusions[id_i].add(id_j)
-            exclusions[id_j].add(id_i)
-
-        for nc in nativeContacts:
-            id_i,id_j = nc
-            exclusions[id_i].add(id_j)
-            exclusions[id_j].add(id_i)
-
-        for bead in self.spreadedCgStructure.get_atoms():
-            id_ = bead.get_serial_number()
-            forceField["nl"]["data"].append([id_,list(exclusions[id_])])
-
-        #Steric
-
-        forceField["steric"] = {}
-        forceField["steric"]["type"]       = ["NonBonded", "WCAType2"]
-        forceField["steric"]["parameters"] = {"cutOffFactor": 2.5,"condition":"intra"}
-        forceField["steric"]["labels"]     = ["name_i","name_j","epsilon","sigma"]
-        forceField["steric"]["data"]       = []
-
-        for t1,t2 in itertools.product(types.keys(),repeat=2):
-            tName1 = types[t1]["name"]
-            tName2 = types[t2]["name"]
-
-            tRadius1 = types[t1]["radius"]
-            tRadius2 = types[t2]["radius"]
-
-            forceField["steric"]["data"].append([tName1,tName2,1.0,round(tRadius1+tRadius2,3)])
-
-        #self.logger.debug(f"Force field: {forceField}")
-        self.logger.info(f"Force field generation end")
-
-        #ForceField end
-
         #############################################################
+
         self.setAggregatedCgStructure(aggregatedCgStructure)
-        self.setSpreadedCgStructure(self.spreadedCgStructure)
+        self.setSpreadedCgStructure(spreadedCgStructure)
         self.setAggregatedCgMap(aggregatedCgMap)
         self.setSpreadedCgMap(spreadedCgMap)
 
@@ -533,31 +302,3 @@ class AdaptiveCG(CoarseGrainedBase):
         self.setState(state)
         self.setStructure(structure)
         self.setForceField(forceField)
-
-    def __generateAdaptiveCGBonds(self,cgstructure,cutoff):
-        ## Get chains
-        beads = np.array([i for i in cgstructure.get_atoms()])
-        chain_by_idx = np.array([i.get_parent().get_parent().get_id() for i in beads])
-        
-        ## Get coords
-        coords = np.array([i.get_coord() for i in cgstructure.get_atoms()])
-
-        kd = cKDTree(coords)
-
-        # All pairs satisfying the cutoff
-        candidate_pairs = kd.query_pairs(cutoff)
-
-        contacts = set()
-        native_contacts = set()
-        
-        for i, j in candidate_pairs:
-            bead_i_chain = chain_by_idx[i]
-            bead_j_chain = chain_by_idx[j]
-
-            # Exclude pairs of the same chain
-            if bead_i_chain != bead_j_chain:
-                contacts.add((i,j))
-            elif bead_i_chain == bead_j_chain:
-                native_contacts.add((i, j))
-
-        return contacts, native_contacts
